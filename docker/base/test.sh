@@ -3,31 +3,15 @@ set -euo pipefail
 
 echo "Testing base image invariants..."
 
-# Test mise
 echo -n "  mise: "
 mise --version || exit 1
 
-# Test git
 echo -n "  git: "
 git --version || exit 1
 
-# Test docker
-echo -n "  docker: "
-docker --version || exit 1
-
-# Test tailscale
-echo -n "  tailscale: "
-tailscale version || exit 1
-
-# Test juicefs
-echo -n "  juicefs: "
-juicefs version || exit 1
-
-# Test zsh
 echo -n "  zsh: "
 zsh --version || exit 1
 
-# Test tmux
 echo -n "  tmux: "
 tmux -V || exit 1
 

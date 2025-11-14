@@ -1,10 +1,10 @@
-name: Build Base Image
+name: Build Base Images
 
 on:
   push:
     branches: [main]
     paths:
-      - 'docker/base/**'
+      - 'docker/**'
       - '.github/workflows/build-base.yml'
       - 'scripts/**'
       - 'devcontainer_templates/**'
@@ -12,7 +12,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'docker/base/**'
+      - 'docker/**'
       - '.github/workflows/build-base.yml'
       - 'scripts/**'
       - 'devcontainer_templates/**'
@@ -21,7 +21,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: coltec/codespace
+  IMAGE_NAME: psu3d0/coltec-codespace
 
 jobs:
   build:
@@ -37,6 +37,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -45,8 +48,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags + labels)
-        id: meta
+      - name: Extract metadata (base)
+        id: meta_base
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -55,20 +58,20 @@ jobs:
             type=ref,event=pr,suffix=-base
             type=sha,suffix=-base
 
-      - name: Build and push
+      - name: Build and push base
         uses: docker/build-push-action@v5
         with:
-          context: ./docker/base
+          context: ./docker
+          file: ./docker/base/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta_base.outputs.tags }}
+          labels: ${{ steps.meta_base.outputs.labels }}
+          cache-from: type=gha,scope=coltec-base
+          cache-to: type=gha,scope=coltec-base,mode=max
 
-      - name: Capture SHA tag for testing
-        run: |
-          SHORT_SHA=${GITHUB_SHA::7}
-          echo "BASE_SHA_TAG=${REGISTRY}/${IMAGE_NAME}:sha-${SHORT_SHA}-base" >> "$GITHUB_ENV"
+      - name: Capture base tag
+        run: echo "BASE_SHA_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}-base" >> "$GITHUB_ENV"
 
       - name: Smoke test base image
         run: |
@@ -76,4 +79,109 @@ jobs:
           docker run --rm \
             -v "$PWD/docker/base/test.sh:/test.sh:ro" \
             "$BASE_SHA_TAG" \
+            /bin/bash /test.sh
+
+      - name: Extract metadata (base-dind)
+        id: meta_base_dind
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch,suffix=-base-dind
+            type=ref,event=pr,suffix=-base-dind
+            type=sha,suffix=-base-dind
+
+      - name: Build and push base-dind
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker
+          file: ./docker/base-dind/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_SHA_TAG }}
+          tags: ${{ steps.meta_base_dind.outputs.tags }}
+          labels: ${{ steps.meta_base_dind.outputs.labels }}
+          cache-from: type=gha,scope=coltec-base-dind
+          cache-to: type=gha,scope=coltec-base-dind,mode=max
+
+      - name: Capture base-dind tag
+        run: echo "BASE_DIND_SHA_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}-base-dind" >> "$GITHUB_ENV"
+
+      - name: Smoke test base-dind image
+        run: |
+          chmod +x docker/base-dind/test.sh
+          docker run --rm \
+            -v "$PWD/docker/base-dind/test.sh:/test.sh:ro" \
+            "$BASE_DIND_SHA_TAG" \
+            /bin/bash /test.sh
+
+      - name: Extract metadata (base-net)
+        id: meta_base_net
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch,suffix=-base-net
+            type=ref,event=pr,suffix=-base-net
+            type=sha,suffix=-base-net
+
+      - name: Build and push base-net
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker
+          file: ./docker/base-net/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_SHA_TAG }}
+          tags: ${{ steps.meta_base_net.outputs.tags }}
+          labels: ${{ steps.meta_base_net.outputs.labels }}
+          cache-from: type=gha,scope=coltec-base-net
+          cache-to: type=gha,scope=coltec-base-net,mode=max
+
+      - name: Capture base-net tag
+        run: echo "BASE_NET_SHA_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}-base-net" >> "$GITHUB_ENV"
+
+      - name: Smoke test base-net image
+        run: |
+          chmod +x docker/base-net/test.sh
+          docker run --rm \
+            -v "$PWD/docker/base-net/test.sh:/test.sh:ro" \
+            "$BASE_NET_SHA_TAG" \
+            /bin/bash /test.sh
+
+      - name: Extract metadata (base-dind-net)
+        id: meta_base_dind_net
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch,suffix=-base-dind-net
+            type=ref,event=pr,suffix=-base-dind-net
+            type=sha,suffix=-base-dind-net
+
+      - name: Build and push base-dind-net
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker
+          file: ./docker/base-dind-net/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_DIND_SHA_TAG }}
+          tags: ${{ steps.meta_base_dind_net.outputs.tags }}
+          labels: ${{ steps.meta_base_dind_net.outputs.labels }}
+          cache-from: type=gha,scope=coltec-base-dind-net
+          cache-to: type=gha,scope=coltec-base-dind-net,mode=max
+
+      - name: Capture base-dind-net tag
+        run: echo "BASE_DIND_NET_SHA_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}-base-dind-net" >> "$GITHUB_ENV"
+
+      - name: Smoke test base-dind-net image
+        run: |
+          chmod +x docker/base-dind-net/test.sh
+          docker run --rm \
+            -v "$PWD/docker/base-dind-net/test.sh:/test.sh:ro" \
+            "$BASE_DIND_NET_SHA_TAG" \
             /bin/bash /test.sh

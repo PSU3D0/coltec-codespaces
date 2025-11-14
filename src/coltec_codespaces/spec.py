@@ -298,7 +298,7 @@ def example_spec() -> WorkspaceSpec:
                 name="rust",
                 path=Path("devcontainer_templates/rust.json.jinja2"),
             ),
-            image=ImageRef(name="ghcr.io/coltec/codespace:base-v1.0.0"),
+            image=ImageRef(name="ghcr.io/psu3d0/coltec-codespace:base-v1.0.0"),
             run_args=["--cap-add=SYS_PTRACE", "--security-opt=seccomp=unconfined"],
             mounts=[
                 MountSpec(

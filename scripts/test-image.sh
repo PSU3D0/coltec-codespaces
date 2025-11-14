@@ -6,12 +6,17 @@ set -euo pipefail
 
 VARIANT=${1:-"base"}
 VERSION=${2:-"1.0.0"}
-REGISTRY="ghcr.io/coltec/codespace"
+REGISTRY="ghcr.io/psu3d0/coltec-codespace"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGES_DIR="$(cd "${SCRIPT_DIR}/../images" && pwd)"
+DOCKER_DIR="$(cd "${SCRIPT_DIR}/../docker" && pwd)"
 
-IMAGE_TAG="${REGISTRY}:${VARIANT}-v${VERSION}"
-TEST_SCRIPT="${IMAGES_DIR}/${VARIANT}/test.sh"
+if [[ "${COLTEC_TEST_LOCAL:-0}" == "1" ]]; then
+    IMAGE_TAG="coltec-codespace:${VARIANT}-local"
+else
+    IMAGE_TAG="${REGISTRY}:${VARIANT}-v${VERSION}"
+fi
+
+TEST_SCRIPT="${DOCKER_DIR}/${VARIANT}/test.sh"
 
 if [ ! -f "${TEST_SCRIPT}" ]; then
     echo "Error: Test script not found for variant '${VARIANT}'"

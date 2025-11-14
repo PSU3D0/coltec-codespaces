@@ -1,60 +1,61 @@
 #!/bin/bash
-# Build all Coltec devcontainer images locally
+# Build all Coltec devcontainer base images locally
 # Usage: ./scripts/build-all.sh [version]
 
 set -euo pipefail
 
 VERSION=${1:-"1.0.0"}
-REGISTRY="ghcr.io/coltec/codespace"
+REGISTRY="ghcr.io/psu3d0/coltec-codespace"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGES_DIR="$(cd "${SCRIPT_DIR}/../images" && pwd)"
+DOCKER_DIR="$(cd "${SCRIPT_DIR}/../docker" && pwd)"
 
-echo "Building Coltec devcontainer images v${VERSION}..."
-echo "Images directory: ${IMAGES_DIR}"
+VARIANTS=("base" "base-dind" "base-net" "base-dind-net")
+declare -A PARENTS=(
+    ["base-dind"]="base"
+    ["base-net"]="base"
+    ["base-dind-net"]="base-dind"
+)
+
+echo "Building Coltec base images v${VERSION}..."
+echo "Docker directory: ${DOCKER_DIR}"
 echo ""
 
-# Build base image first
-echo "==> Building base image..."
-docker build \
-    -t "${REGISTRY}:base-v${VERSION}" \
-    -t "coltec-codespace:base-local" \
-    "${IMAGES_DIR}/base"
-
-echo "✓ Base image built: ${REGISTRY}:base-v${VERSION}"
-echo ""
-
-# Build specialized images (they extend the base)
-# For local builds, we'll use the local tag instead of pulling from registry
-SPECIALIZED_IMAGES=("rust" "python" "node" "monorepo")
-
-for image in "${SPECIALIZED_IMAGES[@]}"; do
-    if [ ! -d "${IMAGES_DIR}/${image}" ]; then
-        echo "==> Skipping ${image} (no sources yet)"
-        echo ""
-        continue
+build_variant() {
+    local variant="$1"
+    local dockerfile="${DOCKER_DIR}/${variant}/Dockerfile"
+    if [[ ! -f "${dockerfile}" ]]; then
+        echo "Skipping ${variant}: no Dockerfile at ${dockerfile}"
+        return
     fi
 
-    echo "==> Building ${image} image..."
-    
-    # Create a temporary Dockerfile that uses the local base image
-    TMP_DOCKERFILE="${IMAGES_DIR}/${image}/Dockerfile.local"
-    sed "s|FROM ghcr.io/coltec/codespace:base-v.*|FROM coltec-codespace:base-local|" \
-        "${IMAGES_DIR}/${image}/Dockerfile" > "${TMP_DOCKERFILE}"
-    
+    local local_tag="coltec-codespace:${variant}-local"
+    local registry_tag="${REGISTRY}:${variant}-v${VERSION}"
+    local build_args=()
+
+    if [[ -n "${PARENTS[${variant}]:-}" ]]; then
+        local parent_variant="${PARENTS[${variant}]}"
+        local parent_tag="coltec-codespace:${parent_variant}-local"
+        build_args+=(--build-arg "BASE_IMAGE=${parent_tag}")
+    fi
+
+    echo "==> Building ${variant}..."
     docker build \
-        -t "${REGISTRY}:${image}-v${VERSION}" \
-        -t "coltec-codespace:${image}-local" \
-        -f "${TMP_DOCKERFILE}" \
-        "${IMAGES_DIR}/${image}"
-    
-    rm "${TMP_DOCKERFILE}"
-    echo "✓ ${image} image built: ${REGISTRY}:${image}-v${VERSION}"
+        -f "${dockerfile}" \
+        -t "${registry_tag}" \
+        -t "${local_tag}" \
+        "${build_args[@]}" \
+        "${DOCKER_DIR}"
+
+    echo "✓ ${variant} built: ${registry_tag}"
     echo ""
+}
+
+for variant in "${VARIANTS[@]}"; do
+    build_variant "${variant}"
 done
 
 echo "==> Build Summary"
-echo "All images built successfully:"
 docker images --filter "reference=${REGISTRY}" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
 
 echo ""
-echo "✅ Build complete! Run './scripts/test-image.sh <variant>' to test an image."
+echo "✅ Build complete! Run './scripts/test-image.sh <variant>' to smoke test an image."

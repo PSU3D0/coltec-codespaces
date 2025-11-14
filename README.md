@@ -1,39 +1,44 @@
 # Coltec Codespaces Tooling
 
-This repository owns **all** Coltec devcontainer tooling: Dockerfiles, devcontainer templates, the `coltec-codespaces` rendering CLI, and GitHub Actions that build/publish images to GHCR. Downstream control planes consume tagged releases of this repo when scaffolding workspaces (see hADR-0007).
+This repository owns **all** Coltec devcontainer tooling: Dockerfiles, devcontainer templates, the `coltec-codespaces` rendering CLI, and GitHub Actions that build/publish images to GHCR. Downstream control planes consume tagged releases of this repo when scaffolding workspaces.
 
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
-| `docker/base/` | Dockerfile + smoke tests for the base image (`ghcr.io/coltec/codespace:base-v1.x.x`). Future variants will live alongside `base/`. |
+| `docker/` | Dockerfiles + smoke tests for every base SKU (see below) and shared install helpers under `docker/scripts/`. |
 | `devcontainer_templates/` | Jinja templates referenced by workspace specs (`template.path`). |
 | `src/coltec_codespaces/` | Pydantic workspace spec models and CLI entry point (`coltec-codespaces`). |
 | `scripts/` | Local helper scripts for building/testing images (`build-all.sh`, `test-image.sh`). |
 | `specs/examples/` | Example workspace specs used for validation/tests. |
 | `.github/workflows/` | CI for building/testing (`build-base.yml`) and releasing (`release.yml`). |
 
-## Base Image (v1.0.0)
-Includes mise v2024.11.14, git, Docker CE (dind), Tailscale v1.74.1, JuiceFS v1.2.1, zsh, tmux, and the `vscode` user with passwordless sudo. These replace the devcontainer features:
+## Base Image SKUs
 
-```json
-{
-  "features": {
-    "ghcr.io/devcontainers-extra/features/mise:1": {},
-    "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {},
-    "ghcr.io/tailscale/codespace/tailscale": {}
-  }
-}
-```
+All workspaces consume one of four GHCR tags: `ghcr.io/psu3d0/coltec-codespace:<sku>-vX.Y.Z`. Each SKU trades features for size so most workspaces can stick to the leanest image.
+
+| SKU | Dockerfile | Adds on top of… | Invariants |
+| --- | --- | --- | --- |
+| `base` | `docker/base/Dockerfile` | `ubuntu:22.04` | mise (v2025.11.4), git, zsh, tmux, sudo, base tooling + `vscode` user |
+| `base-dind` | `docker/base-dind/Dockerfile` | `base` | Docker CE CLI/daemon, buildx, compose |
+| `base-net` | `docker/base-net/Dockerfile` | `base` | Tailscale (v1.90.6), JuiceFS (v1.3.0) |
+| `base-dind-net` | `docker/base-dind-net/Dockerfile` | `base-dind` | Tailscale + JuiceFS |
+
+Guidance:
+- **Most workspaces** → `base`
+- **Needs Docker builds only** → `base-dind`
+- **Needs Tailscale tailnet + JuiceFS** → `base-net`
+- **Needs everything** → `base-dind-net`
+
+JuiceFS only ships in the network-aware SKUs (`base-net`, `base-dind-net`) so we can keep the default `base` as small as possible while still supporting host and in-container mounting strategies.
 
 ## Building & Testing Locally
 ```bash
-# Build base image (tags ghcr.io/coltec/codespace:base-v1.0.0 and local dev tags)
+# Build every SKU in dependency order and tag them locally (coltec-codespace:<sku>-local)
 ./scripts/build-all.sh [version]
 
-# Smoke test the base image using docker run
-./scripts/test-image.sh base [version]
+# Test any SKU (set COLTEC_TEST_LOCAL=1 to target the freshly built local tag)
+COLTEC_TEST_LOCAL=1 ./scripts/test-image.sh base-dind [version]
 ```
 
 ## Workspace Spec CLI
@@ -53,24 +58,22 @@ uv run --project . coltec-codespaces list specs/examples/*.yaml
 Control-plane scaffolding scripts shell out to this CLI to validate and render `.devcontainer/workspace-spec.yaml` for every workspace (see hADR-0007).
 
 ## GitHub Actions
-- **build-base.yml** – Runs on pushes/PRs to `main` that touch `docker/base/` or related scripts. Builds `ghcr.io/coltec/codespace:<branch>-base` and smoke tests it. Pushes only on non-PR events.
-- **release.yml** – Runs on tags (`v*`). Builds from `docker/base/`, pushes semver tags (`base-v1.0.0`, `base-v1.0`, `base-v1`), and smoke tests the published image.
+- **build-base.yml** – Runs on pushes/PRs to `main` that touch `docker/**` or supporting tooling. Sequentially builds all four SKUs (pushing only on non-PR events), tags them as `sha-<commit>-<sku>`, and runs the matching smoke test script for each.
+- **release.yml** – Runs on tags (`v*`). Publishes semver tags for every SKU (`base-v1.2.3`, `base-dind-v1.2.3`, etc.) plus SHA aliases, then re-runs the smoke suites before exiting.
 
-Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and run tests via `docker/base/test.sh`.
+Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and mount the SKU-specific `docker/<sku>/test.sh` scripts into `docker run` for validation.
 
 ## Release Process
-1. Update Dockerfile/tests/templates/specs as needed.
-2. `./scripts/build-all.sh` + `./scripts/test-image.sh base` locally.
+1. Update Dockerfiles/tests/templates/specs as needed.
+2. `./scripts/build-all.sh` locally, then `COLTEC_TEST_LOCAL=1 ./scripts/test-image.sh <sku>` for any variants you touched.
 3. Commit + push to `main`. `build-base.yml` will build/test and push branch/SHA tags.
-4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `base-v1.0.0` and semver aliases.
+4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `<sku>-v1.0.0`, `<sku>-v1.0`, and `<sku>-v1` for every SKU.
 5. Update workspace specs / control-plane references to the new image tag.
 
 ## Maintenance Notes
-- Keep the base image minimal—only invariants required by all workspaces (mise, git, docker, tailscale, juicefs, shells).
-- Bump tool versions via `ARG` values in `docker/base/Dockerfile`, then update `docker/base/test.sh` accordingly.
+- Keep `docker/base` minimal (mise, git, shells, tmux, sudo). Add new capabilities by extending one of the higher SKUs.
+- Bump tool versions via `ARG` values in the relevant Dockerfile and matching install script under `docker/scripts/`, then update that SKU's `test.sh`.
 - Extend `devcontainer_templates/` + `specs/` in lockstep with template changes; add regression tests to CI for new spec scenarios.
 
 ## Links
-- hADR-0006 (Devcontainer Base Images)
-- hADR-0007 (Workspace Spec-Driven Provisioning)
-- Registry namespace: `ghcr.io/coltec/codespace`
+- Registry namespace: `ghcr.io/psu3d0/coltec-codespace`
