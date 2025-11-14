@@ -15,7 +15,7 @@ This repository owns **all** Coltec devcontainer tooling: Dockerfiles, devcontai
 
 ## Base Image SKUs
 
-All workspaces consume one of four GHCR tags: `ghcr.io/psu3d0/coltec-codespace:<sku>-vX.Y.Z`. Each SKU trades features for size so most workspaces can stick to the leanest image.
+All workspaces consume one of four GHCR tags: `ghcr.io/psu3d0/coltec-codespace:<version>-<sku>`. Example: `ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net`. Each SKU trades features for size so most workspaces can stick to the leanest image.
 
 | SKU | Dockerfile | Adds on top of… | Invariants |
 | --- | --- | --- | --- |
@@ -59,7 +59,7 @@ Control-plane scaffolding scripts shell out to this CLI to validate and render `
 
 ## GitHub Actions
 - **build-base.yml** – Runs on pushes/PRs to `main` that touch `docker/**` or supporting tooling. Sequentially builds all four SKUs (pushing only on non-PR events), tags them as `sha-<commit>-<sku>`, and runs the matching smoke test script for each.
-- **release.yml** – Runs on tags (`v*`). Publishes semver tags for every SKU (`base-v1.2.3`, `base-dind-v1.2.3`, etc.) plus SHA aliases, then re-runs the smoke suites before exiting.
+- **release.yml** – Runs on tags (`v*`). Publishes `<version>-<sku>` tags for every SKU (e.g., `1.0-base`, `1.0-base-net`, `1.0-base-dind-net`) plus SHA aliases, then re-runs the smoke suites before exiting.
 
 Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and mount the SKU-specific `docker/<sku>/test.sh` scripts into `docker run` for validation.
 
@@ -67,7 +67,7 @@ Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and mount the 
 1. Update Dockerfiles/tests/templates/specs as needed.
 2. `./scripts/build-all.sh` locally, then `COLTEC_TEST_LOCAL=1 ./scripts/test-image.sh <sku>` for any variants you touched.
 3. Commit + push to `main`. `build-base.yml` will build/test and push branch/SHA tags.
-4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `<sku>-v1.0.0`, `<sku>-v1.0`, and `<sku>-v1` for every SKU.
+4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `<version>-<sku>` tags such as `1.0-base-net` and `1.0-base-dind-net` (plus major/minor aliases) for every SKU.
 5. Update workspace specs / control-plane references to the new image tag.
 
 ## Maintenance Notes

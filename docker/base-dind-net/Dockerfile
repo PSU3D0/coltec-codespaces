@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BASE_IMAGE=ghcr.io/psu3d0/coltec-codespace:base-dind-v1.0.0
+ARG BASE_IMAGE=ghcr.io/psu3d0/coltec-codespace:1.0-base-dind
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source="https://github.com/PSU3D0/coltec-codespaces"

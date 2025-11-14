@@ -29,7 +29,7 @@ class ImageRef(BaseModel):
     def _name_has_tag(cls, value: str) -> str:
         if ":" not in value:
             raise ValueError(
-                "image name must include a tag, e.g. ghcr.io/acme/app:base-v1"
+                "image name must include a tag, e.g. ghcr.io/acme/app:1.0-base-net"
             )
         return value
 
@@ -163,6 +163,9 @@ class DevcontainerSpec(BaseModel):
     features: List[FeatureRef] = Field(default_factory=list)
     user: str = Field("vscode", description="Container user")
     workspace_folder: str = Field("/workspace")
+    workspace_mount: Optional[str] = Field(
+        default=None, description="Override workspace mount target"
+    )
     mounts: List[MountSpec] = Field(default_factory=list)
     run_args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
@@ -203,6 +206,9 @@ class DevcontainerSpec(BaseModel):
             vscode_custom["settings"] = self.customizations.settings.values
         if vscode_custom:
             payload["customizations"] = {"vscode": vscode_custom}
+
+        if self.workspace_mount:
+            payload["workspaceMount"] = self.workspace_mount
 
         return {k: v for k, v in payload.items() if v not in (None, {}, [])}
 
@@ -298,7 +304,8 @@ def example_spec() -> WorkspaceSpec:
                 name="rust",
                 path=Path("devcontainer_templates/rust.json.jinja2"),
             ),
-            image=ImageRef(name="ghcr.io/psu3d0/coltec-codespace:base-v1.0.0"),
+            image=ImageRef(name="ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net"),
+            workspace_mount="source=${localWorkspaceFolder},target=/workspace,type=bind",
             run_args=["--cap-add=SYS_PTRACE", "--security-opt=seccomp=unconfined"],
             mounts=[
                 MountSpec(
