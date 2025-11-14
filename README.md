@@ -1,64 +1,76 @@
-# Coltec Devcontainer Image Sources
+# Coltec Codespaces Tooling
 
-Canonical Dockerfile sources for Coltec's pre-built devcontainer images live here. The `coltec-codespace-images` publishing repo consumes this tree and pushes images to GHCR.
+This repository owns **all** Coltec devcontainer tooling: Dockerfiles, devcontainer templates, the `coltec-codespaces` rendering CLI, and GitHub Actions that build/publish images to GHCR. Downstream control planes consume tagged releases of this repo when scaffolding workspaces (see hADR-0007).
 
-## Scope (v1.0.0)
-- Ship the **base** image only; specialized variants (rust, python, node, monorepo) stay in backlog until the pipeline proves out.
-- Hold all source code, tests, and build tooling under `templates/devcontainer/images/`.
-- Use GitHub Actions (in this subrepo) plus the publishing repo to build, test, and release.
+## Repository Layout
 
-## Base Image
-Location: `base/`
+| Path | Purpose |
+| --- | --- |
+| `docker/base/` | Dockerfile + smoke tests for the base image (`ghcr.io/coltec/codespace:base-v1.x.x`). Future variants will live alongside `base/`. |
+| `devcontainer_templates/` | Jinja templates referenced by workspace specs (`template.path`). |
+| `src/coltec_codespaces/` | Pydantic workspace spec models and CLI entry point (`coltec-codespaces`). |
+| `scripts/` | Local helper scripts for building/testing images (`build-all.sh`, `test-image.sh`). |
+| `specs/examples/` | Example workspace specs used for validation/tests. |
+| `.github/workflows/` | CI for building/testing (`build-base.yml`) and releasing (`release.yml`). |
 
-Includes mise v2024.11.14, git, Docker CE (dind), Tailscale v1.74.1, JuiceFS v1.2.1, zsh, tmux, and the `vscode` user with passwordless sudo. These replace the slow devcontainer features:
+## Base Image (v1.0.0)
+Includes mise v2024.11.14, git, Docker CE (dind), Tailscale v1.74.1, JuiceFS v1.2.1, zsh, tmux, and the `vscode` user with passwordless sudo. These replace the devcontainer features:
 
-```json
-"features": {
-  "ghcr.io/devcontainers-extra/features/mise:1": {},
-  "ghcr.io/devcontainers/features/git:1": {},
-  "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {},
-  "ghcr.io/tailscale/codespace/tailscale": {}
-}
-```
-
-## Working Locally
-1. Build: `./scripts/build-all.sh [version]` (defaults to `1.0.0`).
-2. Test: `./scripts/test-image.sh base [version]` which mounts `base/test.sh` into the built image.
-3. Manual build/test:
-   ```bash
-   cd base
-   docker build -t coltec-codespace:base-test .
-   docker run --rm -v "$PWD/test.sh:/test.sh:ro" coltec-codespace:base-test /bin/bash /test.sh
-   ```
-
-## Publishing Path
-1. Update Dockerfile/test sources and validate locally.
-2. Commit and push to the `coltec-codespace-images` repo.
-3. `build-base.yml` runs on every push/PR to main, building + testing and (when not a PR) pushing `sha`/branch tags to `ghcr.io/coltec/codespace`.
-4. Tag the repo (`vX.Y.Z`) to trigger `release.yml`, which publishes `base-vX.Y.Z` plus semver aliases.
-5. Update devcontainer templates to point at the new tag.
-
-## Devcontainer Usage
-Before:
 ```json
 {
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-  "features": { ... }
+  "features": {
+    "ghcr.io/devcontainers-extra/features/mise:1": {},
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {},
+    "ghcr.io/tailscale/codespace/tailscale": {}
+  }
 }
 ```
-After:
-```json
-{
-  "image": "ghcr.io/coltec/codespace:base-v1.0.0"
-}
+
+## Building & Testing Locally
+```bash
+# Build base image (tags ghcr.io/coltec/codespace:base-v1.0.0 and local dev tags)
+./scripts/build-all.sh [version]
+
+# Smoke test the base image using docker run
+./scripts/test-image.sh base [version]
 ```
+
+## Workspace Spec CLI
+The `coltec-codespaces` CLI renders workspace specs into devcontainer JSON:
+
+```bash
+# Render to stdout (JSON) using uv
+uv run --project . coltec-codespaces render specs/examples/formualizer-dev.yaml
+
+# Validate a spec
+uv run --project . coltec-codespaces validate specs/examples/formualizer-dev.yaml
+
+# List workspaces in a bundle spec
+uv run --project . coltec-codespaces list specs/examples/*.yaml
+```
+
+Control-plane scaffolding scripts shell out to this CLI to validate and render `.devcontainer/workspace-spec.yaml` for every workspace (see hADR-0007).
+
+## GitHub Actions
+- **build-base.yml** – Runs on pushes/PRs to `main` that touch `docker/base/` or related scripts. Builds `ghcr.io/coltec/codespace:<branch>-base` and smoke tests it. Pushes only on non-PR events.
+- **release.yml** – Runs on tags (`v*`). Builds from `docker/base/`, pushes semver tags (`base-v1.0.0`, `base-v1.0`, `base-v1`), and smoke tests the published image.
+
+Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and run tests via `docker/base/test.sh`.
+
+## Release Process
+1. Update Dockerfile/tests/templates/specs as needed.
+2. `./scripts/build-all.sh` + `./scripts/test-image.sh base` locally.
+3. Commit + push to `main`. `build-base.yml` will build/test and push branch/SHA tags.
+4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `base-v1.0.0` and semver aliases.
+5. Update workspace specs / control-plane references to the new image tag.
 
 ## Maintenance Notes
-- Keep the base image minimal—only invariants required by all workspaces. Add new tooling only with hADR approval.
-- Update tool versions by editing the `ARG` values at the top of `base/Dockerfile`, then rebuild/test locally before pushing.
-- Mirror any validation logic updates in `base/test.sh` to keep CI smoke tests aligned.
+- Keep the base image minimal—only invariants required by all workspaces (mise, git, docker, tailscale, juicefs, shells).
+- Bump tool versions via `ARG` values in `docker/base/Dockerfile`, then update `docker/base/test.sh` accordingly.
+- Extend `devcontainer_templates/` + `specs/` in lockstep with template changes; add regression tests to CI for new spec scenarios.
 
 ## Links
-- [hADR-0006: Devcontainer Base Images](/docs/hadr/hADR-0006-devcontainer-base-images.md)
-- Publishing repo: `coltec-codespace-images`
+- hADR-0006 (Devcontainer Base Images)
+- hADR-0007 (Workspace Spec-Driven Provisioning)
 - Registry namespace: `ghcr.io/coltec/codespace`

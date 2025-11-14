@@ -10,7 +10,7 @@ ARG TAILSCALE_VERSION=1.74.1
 ARG JUICEFS_VERSION=1.2.1
 ARG DEBIAN_FRONTEND=noninteractive
 
-LABEL org.opencontainers.image.source=https://github.com/coltec/nexus
+LABEL org.opencontainers.image.source=https://github.com/coltec/coltec-codespaces
 LABEL org.opencontainers.image.description="Coltec base devcontainer image with mise, git, docker, tailscale, juicefs"
 LABEL org.opencontainers.image.licenses=MIT
 

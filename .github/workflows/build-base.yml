@@ -4,15 +4,19 @@ on:
   push:
     branches: [main]
     paths:
-      - 'base/**'
+      - 'docker/base/**'
       - '.github/workflows/build-base.yml'
       - 'scripts/**'
+      - 'devcontainer_templates/**'
+      - 'src/**'
   pull_request:
     branches: [main]
     paths:
-      - 'base/**'
+      - 'docker/base/**'
       - '.github/workflows/build-base.yml'
       - 'scripts/**'
+      - 'devcontainer_templates/**'
+      - 'src/**'
   workflow_dispatch:
 
 env:
@@ -54,7 +58,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./base
+          context: ./docker/base
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -68,8 +72,8 @@ jobs:
 
       - name: Smoke test base image
         run: |
-          chmod +x base/test.sh
+          chmod +x docker/base/test.sh
           docker run --rm \
-            -v "$PWD/base/test.sh:/test.sh:ro" \
+            -v "$PWD/docker/base/test.sh:/test.sh:ro" \
             "$BASE_SHA_TAG" \
             /bin/bash /test.sh

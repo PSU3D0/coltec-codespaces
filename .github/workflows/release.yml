@@ -45,7 +45,7 @@ jobs:
       - name: Build and push release image
         uses: docker/build-push-action@v5
         with:
-          context: ./base
+          context: ./docker/base
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -59,8 +59,8 @@ jobs:
 
       - name: Smoke test release image
         run: |
-          chmod +x base/test.sh
+          chmod +x docker/base/test.sh
           docker run --rm \
-            -v "$PWD/base/test.sh:/test.sh:ro" \
+            -v "$PWD/docker/base/test.sh:/test.sh:ro" \
             "$BASE_SHA_TAG" \
             /bin/bash /test.sh
