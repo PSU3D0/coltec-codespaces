@@ -3,6 +3,10 @@
 ARG BASE_IMAGE=ghcr.io/psu3d0/coltec-codespace:base-dind-v1.0.0
 FROM ${BASE_IMAGE}
 
+LABEL org.opencontainers.image.source="https://github.com/PSU3D0/coltec-codespaces"
+LABEL org.opencontainers.image.description="Coltec Docker + networking devcontainer with Docker dind, Tailscale, and JuiceFS"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TAILSCALE_VERSION=1.90.6
 ARG JUICEFS_VERSION=1.3.0

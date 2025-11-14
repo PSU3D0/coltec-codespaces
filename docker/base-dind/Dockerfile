@@ -3,6 +3,10 @@
 ARG BASE_IMAGE=ghcr.io/psu3d0/coltec-codespace:base-v1.0.0
 FROM ${BASE_IMAGE}
 
+LABEL org.opencontainers.image.source="https://github.com/PSU3D0/coltec-codespaces"
+LABEL org.opencontainers.image.description="Coltec base devcontainer with Docker CE CLI/daemon, buildx, and compose"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ARG DEBIAN_FRONTEND=noninteractive
 
 USER root
