@@ -1,0 +1,66 @@
+name: Release Base Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: coltec/codespace
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (semver tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},suffix=-base
+            type=semver,pattern={{major}}.{{minor}},suffix=-base
+            type=semver,pattern={{major}},suffix=-base
+            type=ref,event=tag,suffix=-base
+            type=sha,suffix=-base
+
+      - name: Build and push release image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./base
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Capture release tag
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          echo "BASE_SHA_TAG=${REGISTRY}/${IMAGE_NAME}:sha-${SHORT_SHA}-base" >> "$GITHUB_ENV"
+
+      - name: Smoke test release image
+        run: |
+          chmod +x base/test.sh
+          docker run --rm \
+            -v "$PWD/base/test.sh:/test.sh:ro" \
+            "$BASE_SHA_TAG" \
+            /bin/bash /test.sh

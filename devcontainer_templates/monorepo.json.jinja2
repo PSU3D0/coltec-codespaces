@@ -1,0 +1,3 @@
+{% set extensions = (base_extensions + python_extensions + node_extensions + rust_extensions) | dedupe %}
+{% set settings = base_settings %}
+{% include "devcontainer/base.json.jinja2" %}

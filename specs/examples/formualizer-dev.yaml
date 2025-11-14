@@ -1,0 +1,38 @@
+name: formualizer-dev
+metadata:
+  org: coltec
+  project: formualizer
+  environment: dev
+  description: "Main developer workspace for the Formualizer engine"
+  tags:
+    - rust
+    - open-source
+version: 1.0.0
+devcontainer:
+  template:
+    name: rust
+    path: devcontainer_templates/rust.json.jinja2
+  image:
+    name: ghcr.io/coltec/codespace:base-v1.0.0
+  run_args:
+    - --cap-add=SYS_PTRACE
+    - --security-opt=seccomp=unconfined
+  mounts:
+    - source: formualizer-dev-home
+      target: /home/vscode
+      type: volume
+  lifecycle:
+    post_create:
+      - ./.devcontainer/scripts/post-create.sh
+    post_start:
+      - ./.devcontainer/scripts/post-start.sh
+  customizations:
+    extensions:
+      recommended:
+        - ms-azuretools.vscode-docker
+        - rust-lang.rust-analyzer
+        - tamasfe.even-better-toml
+    settings:
+      values:
+        terminal.integrated.defaultProfile.linux: tmux
+        files.trimTrailingWhitespace: true
