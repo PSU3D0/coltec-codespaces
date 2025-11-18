@@ -130,8 +130,10 @@ def cmd_workspace_new(args: argparse.Namespace) -> None:
 
     asset = args.asset
     if not asset:
-        print("Error: Asset repo argument is required.")
-        sys.exit(1)
+        asset = _prompt("Asset repo URL or path")
+        if not asset:
+            print("Error: Asset repo is required.")
+            sys.exit(1)
 
     org_slug = args.org
     if not org_slug:
@@ -233,7 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # workspace new
     ws_new = ws_subs.add_parser("new", help="Provision a new workspace")
-    ws_new.add_argument("asset", help="Asset repo URL or path")
+    ws_new.add_argument("asset", nargs="?", help="Asset repo URL or path")
     ws_new.add_argument("--repo-root", help="Path to Coltec control plane root")
     ws_new.add_argument("--manifest", help="Path to manifest.yaml")
     ws_new.add_argument("--org", help="Org slug")
