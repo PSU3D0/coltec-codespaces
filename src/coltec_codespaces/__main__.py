@@ -156,7 +156,16 @@ def cmd_workspace_new(args: argparse.Namespace) -> None:
 
     branch = args.branch
 
+    create_remote = args.create_remote
+
     if not args.yes:
+        if not create_remote:
+            # If flag wasn't passed, ask interactively
+            cr_choice = _prompt_choice(
+                "Create private GitHub repo for workspace?", ["y", "n"], default="n"
+            )
+            create_remote = cr_choice == "y"
+
         confirm = _prompt_choice("Proceed?", ["y", "n"], default="y")
         if confirm != "y":
             sys.exit(0)
@@ -170,7 +179,7 @@ def cmd_workspace_new(args: argparse.Namespace) -> None:
             environment_name=env_name,
             project_type=p_type,
             asset_branch=branch,
-            create_remote=args.create_remote,
+            create_remote=create_remote,
             gh_org=args.gh_org,
             gh_name=args.gh_name,
             manifest_path=Path(args.manifest) if args.manifest else None,
