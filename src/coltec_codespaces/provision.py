@@ -411,9 +411,12 @@ def provision_workspace(
         )
 
         # 6. Git Submodule & Commit
+        # We must explicitly allow file protocol for local submodules due to git security restrictions
         _run(
             [
                 "git",
+                "-c",
+                "protocol.file.allow=always",
                 "submodule",
                 "add",
                 "-b",
