@@ -10,5 +10,14 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = "src"
+
 [project.scripts]
 coltec-codespaces = "coltec_codespaces.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-mock>=3.15.1",
+]
