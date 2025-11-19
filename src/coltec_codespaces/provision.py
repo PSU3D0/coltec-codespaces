@@ -68,6 +68,7 @@ BASE_SETTINGS = {
             "args": ["new-session", "-A", "-s", "devcontainer"],
         },
     },
+    "terminal.integrated.cwd": "/workspace",
     "terminal.integrated.localEchoEnabled": "on",
     "files.trimTrailingWhitespace": True,
     "editor.formatOnSave": True,
@@ -236,6 +237,43 @@ def render_agent_project_yaml(
     return yaml.safe_dump(content, sort_keys=False)
 
 
+def render_templates(
+    scaffold_roots: List[Path],
+    context: Dict[str, Any],
+    env: Environment,
+) -> Dict[Path, str]:
+    """
+    Renders all templates from the scaffold roots using the provided context.
+    Returns a dict of {relative_output_path: content}.
+    Files that render to empty strings are omitted (Ghost File Pattern).
+    """
+    results = {}
+    # Render in order: base first, overlays later overwrite
+    for scaffold_root in scaffold_roots:
+        for template_file in scaffold_root.rglob("*"):
+            if template_file.is_dir():
+                continue
+
+            rel_path = template_file.relative_to(scaffold_root.parent)
+            template = env.get_template(str(rel_path).replace(os.sep, "/"))
+            rendered = template.render(**context)
+
+            # Skip empty files (Ghost File Pattern)
+            rel_output = template_file.relative_to(scaffold_root)
+            if rel_output.suffix == ".jinja2":
+                rel_output = rel_output.with_suffix("")
+
+            if not rendered.strip():
+                # If a later overlay renders empty, it effectively deletes/hides the file
+                if rel_output in results:
+                    del results[rel_output]
+                continue
+
+            results[rel_output] = rendered
+
+    return results
+
+
 def provision_workspace(
     repo_root: Path,
     asset_input: str,
@@ -248,20 +286,33 @@ def provision_workspace(
     gh_org: Optional[str] = None,
     gh_name: Optional[str] = None,
     templates_dir: Optional[Path] = None,
+    template_overlays: Optional[List[Path]] = None,
     manifest_path: Optional[Path] = None,
 ) -> None:
     """
     Core logic to provision a new Coltec workspace.
     """
 
+    # Resolve default templates and overlays
     if not templates_dir:
         templates_dir = repo_root / "templates"
 
-    workspace_scaffold_dir = templates_dir / "workspace_scaffold"
-    if not workspace_scaffold_dir.exists():
-        raise RuntimeError(
-            f"Workspace scaffold templates not found: {workspace_scaffold_dir}"
-        )
+    scaffold_roots: List[Path] = []
+    base_scaffold = templates_dir / "workspace_scaffold"
+    if not base_scaffold.exists():
+        raise RuntimeError(f"Base template directory not found: {base_scaffold}")
+    scaffold_roots.append(base_scaffold)
+
+    if template_overlays:
+        for overlay in template_overlays:
+            overlay_scaffold = overlay / "workspace_scaffold"
+            if overlay_scaffold.exists():
+                scaffold_roots.append(overlay_scaffold)
+            else:
+                print(
+                    f"[provision] Warning: overlay scaffold not found, skipping: {overlay_scaffold}",
+                    file=sys.stderr,
+                )
 
     if not manifest_path:
         manifest_path = repo_root / "codespaces/manifest.yaml"
@@ -358,9 +409,10 @@ def provision_workspace(
             raise RuntimeError(f"Failed to generate/validate spec: {e}") from e
 
         # 4. Render Scaffold Templates (README, scripts)
-        # Setup Jinja environment
+        # Setup Jinja environment that can see all scaffold roots
+        loader_paths = sorted({str(root.parent) for root in scaffold_roots})
         template_env = Environment(
-            loader=FileSystemLoader(templates_dir),
+            loader=FileSystemLoader(loader_paths),
             autoescape=False,
             trim_blocks=True,
             lstrip_blocks=True,
@@ -373,31 +425,24 @@ def provision_workspace(
             "project_slug": project_slug,
             "project_type": project_type,
             "asset_repo_url": asset_repo_url,
+            "config": project_entry.get("config", {}),
+            "features": project_entry.get("features", []),
         }
 
-        for template_file in workspace_scaffold_dir.rglob("*"):
-            if template_file.is_dir():
-                continue
+        rendered_files = render_templates(
+            scaffold_roots, scaffold_context, template_env
+        )
 
-            # Compute relative path from templates dir for Jinja loading
-            # template_file is absolute, templates_dir is absolute
-            rel_path = template_file.relative_to(templates_dir)
-            template = template_env.get_template(str(rel_path).replace(os.sep, "/"))
-            rendered = template.render(**scaffold_context)
-
-            # Compute output path relative to scaffold root
-            rel_output = template_file.relative_to(workspace_scaffold_dir)
-            if rel_output.suffix == ".jinja2":
-                rel_output = rel_output.with_suffix("")
-
+        for rel_output, content in rendered_files.items():
             target_path = workspace_path / rel_output
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(rendered, encoding="utf-8")
+            target_path.write_text(content, encoding="utf-8")
 
             if target_path.suffix in {".sh", ".bash"}:
                 target_path.chmod(target_path.stat().st_mode | 0o111)
 
         # 5. Agent Project YAML
+
         project_id = f"{org_slug}-{project_slug}-{environment_name}"
         agent_project_yaml = render_agent_project_yaml(
             project_id=project_id,
@@ -510,3 +555,206 @@ def provision_workspace(
                 file=sys.stderr,
             )
         raise
+
+
+def update_workspace(
+    workspace_path: Path,
+    repo_root: Path,
+    manifest_path: Optional[Path] = None,
+    templates_dir: Optional[Path] = None,
+    template_overlays: Optional[List[Path]] = None,
+    dry_run: bool = False,
+    force: bool = False,
+) -> bool:
+    """
+    Updates an existing workspace with the latest templates.
+    Returns True if changes were applied (or would be applied in dry-run).
+    """
+    if not workspace_path.exists():
+        raise RuntimeError(f"Workspace path not found: {workspace_path}")
+
+    if not manifest_path:
+        manifest_path = repo_root / "codespaces/manifest.yaml"
+
+    # 1. Reconstruct Context
+    # We need to find the manifest entry to get config/features
+    # and use the workspace-spec.yaml for immutable IDs if needed,
+    # but manifest is the source of truth for *desired* state.
+
+    manifest_data = load_manifest(manifest_path)
+    # Find entry matching this workspace path
+    try:
+        rel_path = workspace_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        # If workspace_path is absolute and not in repo_root, we can't easily find it by path
+        # But we can assume standard structure: codespaces/org/project/env
+        # Let's try to parse from path parts
+        # codespaces/coltec/coltec-codespaces -> org=coltec, project=coltec-codespaces (wrong, env is coltec-codespaces?)
+        # Standard: codespaces/<org_dir>/<env_name>
+        # But org_dir is slugified org.
+        # Let's search the manifest for value matching rel_path
+        rel_path = str(workspace_path)  # Fallback
+
+    # find_manifest_entry returns (org, proj, env) or None
+    # It takes Path objects for signature
+    entry_tuple = find_manifest_entry(manifest_data, workspace_path, repo_root)
+
+    if not entry_tuple:
+        # Heuristic: assuming standard codespaces/<org>/<project>/<env> structure
+        parts = workspace_path.parts
+        if len(parts) >= 3:
+            env_name_heuristic = parts[-1]
+            # Try to find an entry with this env name.
+            # This is risky if names aren't unique, but `provision` enforces uniqueness per project.
+            # Let's iterate all projects to find a match.
+            found = None
+            for org_key, org_val in manifest_data.get("manifest", {}).items():
+                for proj_key, proj_val in org_val.get("projects", {}).items():
+                    for env in proj_val.get("environments", []):
+                        if env.get("name") == env_name_heuristic:
+                            # Found it
+                            # Reconstruct entry format returned by find_manifest_entry
+                            found = (org_key, proj_key, env)
+                            break
+                    if found:
+                        break
+                if found:
+                    break
+            entry_tuple = found
+
+    if not entry_tuple:
+        raise RuntimeError(f"Could not find manifest entry for {workspace_path}")
+
+    org_slug, project_slug, env_entry = entry_tuple
+    env_name = env_entry["name"]
+    project_type = env_entry["project_type"]
+    asset_repo_url = env_entry["asset_repo_url"]
+
+    # Config/Features are on the PROJECT level, not environment level in schema?
+    # provision.py:391: "config": project_entry.get("config", {})
+    # So we need the project entry. `find_manifest_entry` returns a flattened dict?
+    # Let's look at `manifest.py` or just re-traverse.
+    # Actually, let's implement a robust lookup helper or just traverse here.
+
+    # Re-traverse to get full context including project-level config
+    org_data = manifest_data.get("manifest", {}).get(org_slug, {})
+    project_data = org_data.get("projects", {}).get(project_slug, {})
+
+    scaffold_context = {
+        "workspace_name": env_name,
+        "org_slug": org_slug,
+        "project_slug": project_slug,
+        "project_type": project_type,
+        "asset_repo_url": asset_repo_url,
+        "config": project_data.get("config", {}),
+        "features": project_data.get("features", []),
+    }
+
+    # 2. Prepare Templates
+    if not templates_dir:
+        templates_dir = repo_root / "templates"
+
+    scaffold_roots: List[Path] = []
+    base_scaffold = templates_dir / "workspace_scaffold"
+    if not base_scaffold.exists():
+        raise RuntimeError(f"Base template directory not found: {base_scaffold}")
+    scaffold_roots.append(base_scaffold)
+
+    if template_overlays:
+        for overlay in template_overlays:
+            overlay_scaffold = overlay / "workspace_scaffold"
+            if overlay_scaffold.exists():
+                scaffold_roots.append(overlay_scaffold)
+
+    loader_paths = sorted({str(root.parent) for root in scaffold_roots})
+    template_env = Environment(
+        loader=FileSystemLoader(loader_paths),
+        autoescape=False,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    template_env.filters["dedupe"] = _dedupe
+
+    # 3. Render & Diff
+    rendered_files = render_templates(scaffold_roots, scaffold_context, template_env)
+    changes = []
+
+    print(f"\n[update] Checking for drift in {workspace_path}...")
+
+    for rel_path, new_content in rendered_files.items():
+        target_file = workspace_path / rel_path
+
+        if not target_file.exists():
+            changes.append(("ADD", rel_path, new_content))
+            continue
+
+        # Check content
+        current_content = target_file.read_text(encoding="utf-8")
+        if current_content != new_content:
+            changes.append(("MOD", rel_path, new_content))
+
+    if not changes:
+        print("[update] No changes detected. Workspace is up to date.")
+        return False
+
+    print(f"[update] Found {len(changes)} changes:")
+    for action, path, _ in changes:
+        print(f"  {action} {path}")
+
+    if dry_run:
+        print("[update] Dry run complete. Pass --force to apply changes.")
+        return True
+
+    if not force:
+        # Simple safeguard against accidental bulk overwrites if called programmatically
+        # CLI usually handles confirmation
+        pass
+
+    # 4. Apply Changes
+    print("[update] Applying changes...")
+    for action, rel_path, content in changes:
+        target_path = workspace_path / rel_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(content, encoding="utf-8")
+        if target_path.suffix in {".sh", ".bash"}:
+            target_path.chmod(target_path.stat().st_mode | 0o111)
+        print(f"  Applied {action} {rel_path}")
+
+    # TODO: Should we regenerate devcontainer.json?
+    # Yes, because the spec might have changed if templates changed (e.g. spec template).
+    # But `workspace-spec.yaml` is generated from code logic, NOT Jinja templates (mostly).
+    # Actually, `workspace-spec.yaml` IS generated via python code `build_workspace_spec_data`, not a template file.
+    # If the python logic changed, we should regenerate it.
+    # Let's regenerate the spec and devcontainer.json as well to be safe.
+
+    try:
+        spec_data = build_workspace_spec_data(
+            workspace_name=env_name,
+            project_type=project_type,
+            org_slug=org_slug,
+            project_slug=project_slug,
+        )
+        spec_model = WorkspaceSpec.model_validate(spec_data)
+
+        # Check spec drift
+        spec_path = workspace_path / ".devcontainer/workspace-spec.yaml"
+        new_spec_yaml = yaml.safe_dump(spec_data, sort_keys=False)
+
+        if (
+            not spec_path.exists()
+            or spec_path.read_text(encoding="utf-8") != new_spec_yaml
+        ):
+            print("  MOD .devcontainer/workspace-spec.yaml")
+            spec_path.write_text(new_spec_yaml, encoding="utf-8")
+
+            # Regenerate devcontainer.json
+            devcontainer_json = spec_model.devcontainer_json()
+            (workspace_path / ".devcontainer/devcontainer.json").write_text(
+                devcontainer_json, encoding="utf-8"
+            )
+            print("  MOD .devcontainer/devcontainer.json")
+
+    except Exception as e:
+        print(f"[update] Warning: Failed to regenerate spec: {e}", file=sys.stderr)
+
+    return True

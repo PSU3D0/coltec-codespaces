@@ -1,4 +1,5 @@
 import pytest
+import pytest
 from pathlib import Path
 from coltec_codespaces.provision import provision_workspace
 
@@ -61,6 +62,32 @@ def test_idempotency_safeguard(sandbox, mock_run, mock_git_utils):
             environment_name="env-1",
             project_type="python",
         )
+
+
+def test_template_overlay_applies(sandbox, mock_run, mock_git_utils):
+    """
+    Ensures overlays can add extra files.
+    """
+    overlay = sandbox / "templates/overlays/human_zsh"
+    # If the real overlay isn't present (CI fallback), create a minimal one
+    if not overlay.exists():
+        (overlay / "workspace_scaffold").mkdir(parents=True)
+        (overlay / "workspace_scaffold/.zshrc.jinja2").write_text(
+            "echo overlay", encoding="utf-8"
+        )
+
+    provision_workspace(
+        repo_root=sandbox,
+        asset_input="dummy",
+        org_slug="test-org",
+        project_slug="test-proj",
+        environment_name="env-overlay",
+        project_type="python",
+        template_overlays=[overlay],
+    )
+
+    workspace_path = sandbox / "codespaces/test-org/env-overlay"
+    assert (workspace_path / ".zshrc").exists()
 
 
 def test_remote_provisioning_defaults(sandbox, mock_run, mock_git_utils):

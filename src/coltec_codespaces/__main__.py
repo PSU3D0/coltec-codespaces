@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Tuple, Optional
 
@@ -135,6 +137,16 @@ def cmd_workspace_new(args: argparse.Namespace) -> None:
             print("Error: Asset repo is required.")
             sys.exit(1)
 
+    asset_path = None
+    if not (
+        asset.startswith("git@")
+        or asset.startswith("https://")
+        or asset.startswith("http://")
+    ):
+        p = Path(asset).expanduser().resolve()
+        if p.exists():
+            asset_path = p
+
     org_slug = args.org
     if not org_slug:
         org_slug = _slugify(_prompt("Org slug", default="coltec"))
@@ -160,6 +172,62 @@ def cmd_workspace_new(args: argparse.Namespace) -> None:
 
     create_remote = args.create_remote
 
+    # Handle local asset repo bootstrap if needed
+    def _maybe_init_local_asset(path: Path) -> None:
+        if (path / ".git").exists():
+            return
+        if args.yes:
+            print(f"Initializing git repo in {path} (non-interactive --yes)")
+            subprocess.run(["git", "init"], check=True, cwd=path)
+            return
+        choice = _prompt_choice(
+            f"Local asset path {path} has no .git. Initialize git repo?",
+            ["y", "n"],
+            default="y",
+        )
+        if choice != "y":
+            print("Cannot proceed without a git repo for the asset.")
+            sys.exit(1)
+        subprocess.run(["git", "init"], check=True, cwd=path)
+        if shutil.which("gh"):
+            if (
+                _prompt_choice(
+                    "Create a GitHub repo for the asset via gh?",
+                    ["y", "n"],
+                    default="n",
+                )
+                == "y"
+            ):
+                repo_name = _prompt("GitHub repo name", default=path.name)
+                try:
+                    subprocess.run(
+                        ["gh", "repo", "create", repo_name, "--private", "--confirm"],
+                        check=True,
+                        cwd=path,
+                    )
+                    subprocess.run(
+                        [
+                            "git",
+                            "remote",
+                            "add",
+                            "origin",
+                            f"git@github.com:{repo_name}.git",
+                        ],
+                        check=False,
+                        cwd=path,
+                    )
+                    print(f"Linked asset repo to git@github.com:{repo_name}.git")
+                except subprocess.CalledProcessError:
+                    print(
+                        "Warning: gh repo create failed; continuing without remote",
+                        file=sys.stderr,
+                    )
+        else:
+            print("gh CLI not available; skipping remote creation")
+
+    if asset_path:
+        _maybe_init_local_asset(asset_path)
+
     if not args.yes:
         if not create_remote:
             # If flag wasn't passed, ask interactively
@@ -184,7 +252,14 @@ def cmd_workspace_new(args: argparse.Namespace) -> None:
             create_remote=create_remote,
             gh_org=args.gh_org,
             gh_name=args.gh_name,
+            # If manifest arg is provided, use it, otherwise None (default)
             manifest_path=Path(args.manifest) if args.manifest else None,
+            templates_dir=Path(args.templates_root).resolve()
+            if args.templates_root
+            else None,
+            template_overlays=[
+                Path(p).resolve() for p in (args.template_overlay or [])
+            ],
         )
     except Exception as e:
         print(f"Error provisioning workspace: {e}", file=sys.stderr)
@@ -201,6 +276,37 @@ def cmd_workspace_validate(args: argparse.Namespace) -> None:
         manifest_path=Path(args.manifest) if args.manifest else None,
     )
     sys.exit(0 if success else 1)
+
+
+def cmd_workspace_update(args: argparse.Namespace) -> None:
+    repo_root = Path(args.repo_root or ".").resolve()
+    target = Path(args.target).resolve()
+
+    if not target.exists():
+        print(f"Error: Target workspace '{target}' does not exist.")
+        sys.exit(1)
+
+    try:
+        from .provision import update_workspace
+
+        changed = update_workspace(
+            workspace_path=target,
+            repo_root=repo_root,
+            manifest_path=Path(args.manifest) if args.manifest else None,
+            templates_dir=Path(args.templates_root).resolve()
+            if args.templates_root
+            else None,
+            template_overlays=[
+                Path(p).resolve() for p in (args.template_overlay or [])
+            ],
+            dry_run=args.check,
+            force=args.force,
+        )
+        if not changed:
+            print("No changes applied.")
+    except Exception as e:
+        print(f"Error updating workspace: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -249,6 +355,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ws_new.add_argument("--gh-org", help="GitHub Org override")
     ws_new.add_argument("--gh-name", help="GitHub Repo Name override")
+    ws_new.add_argument(
+        "--templates-root",
+        help="Override base templates directory (defaults to <repo_root>/templates)",
+    )
+    ws_new.add_argument(
+        "--template-overlay",
+        action="append",
+        help="Additional template directory to overlay (expects workspace_scaffold/ inside). Repeatable.",
+    )
     ws_new.set_defaults(func=cmd_workspace_new)
 
     # workspace validate
@@ -257,6 +372,24 @@ def build_parser() -> argparse.ArgumentParser:
     ws_val.add_argument("--repo-root", help="Path to Coltec control plane root")
     ws_val.add_argument("--manifest", help="Path to manifest.yaml")
     ws_val.set_defaults(func=cmd_workspace_validate)
+
+    # workspace update
+    ws_up = ws_subs.add_parser("update", help="Update workspace templates from source")
+    ws_up.add_argument("--target", required=True, help="Workspace path to update")
+    ws_up.add_argument("--repo-root", help="Path to Coltec control plane root")
+    ws_up.add_argument("--manifest", help="Path to manifest.yaml")
+    ws_up.add_argument(
+        "--templates-root",
+        help="Override base templates directory (defaults to <repo_root>/templates)",
+    )
+    ws_up.add_argument(
+        "--template-overlay",
+        action="append",
+        help="Additional template directory to overlay. Repeatable.",
+    )
+    ws_up.add_argument("--check", action="store_true", help="Dry-run/diff only")
+    ws_up.add_argument("--force", action="store_true", help="Apply changes")
+    ws_up.set_defaults(func=cmd_workspace_update)
 
     return parser
 
