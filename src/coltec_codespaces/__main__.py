@@ -16,6 +16,17 @@ from .spec import SpecBundle, WorkspaceSpec
 from .validate import validate_workspace_layout
 from .provision import provision_workspace, _slugify
 from .manifest import load_manifest
+from .storage import (
+    load_storage_mapping,
+    StorageMapping,
+    validate_mounts_match_spec,
+    ensure_env_vars_present,
+    JuiceFSCommands,
+    juicefs_status,
+    juicefs_format,
+    juicefs_mount,
+    juicefs_umount,
+)
 
 
 def _load_spec_object(path: Path) -> Tuple[WorkspaceSpec | SpecBundle, bool]:
@@ -354,6 +365,128 @@ def cmd_workspace_update(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _storage_targets(
+    repo_root: Path,
+    manifest_path: Path,
+    mapping: StorageMapping,
+    workspace: Optional[str],
+) -> dict[str, Path]:
+    if workspace:
+        if workspace not in mapping.workspaces:
+            raise RuntimeError(f"Workspace '{workspace}' not found in mapping")
+        # Need manifest to locate actual path
+        manifest = load_manifest(manifest_path)
+        for org_slug, org_data in (manifest.get("manifest") or {}).items():
+            project_dir = org_data.get("project_dir") or org_slug
+            for project_slug, project_data in (org_data.get("projects") or {}).items():
+                for env in project_data.get("environments") or []:
+                    env_name = env.get("name")
+                    key = f"{org_slug}/{project_slug}/{env_name}"
+                    if key == workspace:
+                        rel = env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                        return {key: (repo_root / rel).resolve()}
+        raise RuntimeError(f"Workspace '{workspace}' not found in manifest")
+
+    manifest = load_manifest(manifest_path)
+    targets: dict[str, Path] = {}
+    for org_slug, org_data in (manifest.get("manifest") or {}).items():
+        project_dir = org_data.get("project_dir") or org_slug
+        for project_slug, project_data in (org_data.get("projects") or {}).items():
+            for env in project_data.get("environments") or []:
+                env_name = env.get("name")
+                key = f"{org_slug}/{project_slug}/{env_name}"
+                if key in mapping.workspaces:
+                    rel = env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                    targets[key] = (repo_root / rel).resolve()
+    return targets
+
+
+def _storage_env(mapping: StorageMapping) -> dict:
+    import os
+
+    env = dict(os.environ)
+    required = [mapping.metadata_dsn_env, "JUICEFS_ACCESS_KEY_ID", "JUICEFS_SECRET_ACCESS_KEY"]
+    if mapping.s3_endpoint_env:
+        required.append(mapping.s3_endpoint_env)
+    ensure_env_vars_present(env, required)
+    return env
+
+
+def cmd_storage_validate(args: argparse.Namespace) -> None:
+    repo_root = Path(args.repo_root or ".").resolve()
+    mapping_path = Path(args.mapping).resolve()
+    mapping = load_storage_mapping(mapping_path)
+    env = _storage_env(mapping)
+    manifest_path = Path(args.manifest) if args.manifest else repo_root / "codespaces" / "manifest.yaml"
+    targets = _storage_targets(repo_root, manifest_path, mapping, args.workspace)
+
+    if not targets:
+        print("No workspaces to validate (mapping/manifest intersection empty).")
+        return
+
+    for key, ws_path in targets.items():
+        entry = mapping.workspaces.get(key)
+        if not entry:
+            print(f"[validate] Warning: {key} not in mapping")
+            continue
+        validate_mounts_match_spec(ws_path, entry)
+        print(f"[validate] {key}: mounts match and env present.")
+
+
+def cmd_storage_provision(args: argparse.Namespace) -> None:
+    repo_root = Path(args.repo_root or ".").resolve()
+    mapping_path = Path(args.mapping).resolve()
+    mapping = load_storage_mapping(mapping_path)
+    env = _storage_env(mapping)
+    manifest_path = Path(args.manifest) if args.manifest else repo_root / "codespaces" / "manifest.yaml"
+    targets = _storage_targets(repo_root, manifest_path, mapping, args.workspace)
+    if not targets:
+        print("No workspaces to provision (mapping/manifest intersection empty).")
+        return
+
+    commands = JuiceFSCommands()
+    for key, _ in targets.items():
+        entry = mapping.workspaces[key]
+        dsn = env[mapping.metadata_dsn_env]
+        endpoint = env.get(mapping.s3_endpoint_env or "", "") or None
+        ok = juicefs_status(commands, dsn, env)
+        if not ok:
+            if not args.format:
+                raise RuntimeError(
+                    f"{key}: metadata not formatted; re-run with --format to initialize"
+                )
+            juicefs_format(
+                commands,
+                dsn=dsn,
+                bucket=mapping.bucket,
+                access_key=env["JUICEFS_ACCESS_KEY_ID"],
+                secret_key=env["JUICEFS_SECRET_ACCESS_KEY"],
+                endpoint=endpoint,
+                filesystem=mapping.filesystem,
+                env=env,
+            )
+            print(f"[provision] {key}: formatted JuiceFS metadata")
+        else:
+            print(f"[provision] {key}: metadata already initialized")
+
+        if args.mount:
+            mountpoint = Path(args.mountpoint)
+            juicefs_mount(
+                commands,
+                dsn=dsn,
+                mountpoint=mountpoint,
+                bucket=mapping.bucket,
+                access_key=env["JUICEFS_ACCESS_KEY_ID"],
+                secret_key=env["JUICEFS_SECRET_ACCESS_KEY"],
+                endpoint=endpoint,
+                cache_size_mb=args.cache_size_mb,
+                env=env,
+            )
+            print(f"[provision] {key}: mounted at {mountpoint}")
+            juicefs_umount(commands, mountpoint, env)
+            print(f"[provision] {key}: unmounted {mountpoint}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Coltec workspace tooling CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -444,6 +577,63 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ws_up.add_argument("--force", action="store_true", help="Apply changes")
     ws_up.set_defaults(func=cmd_workspace_update)
+
+    # storage commands
+    storage = subparsers.add_parser("storage", help="Storage operations")
+    storage_subs = storage.add_subparsers(dest="storage_command", required=True)
+
+    st_validate = storage_subs.add_parser(
+        "validate", help="Validate storage mapping and env for workspaces"
+    )
+    st_validate.add_argument("--repo-root", help="Path to Coltec control plane root")
+    st_validate.add_argument("--manifest", help="Path to manifest.yaml")
+    st_validate.add_argument(
+        "--mapping",
+        help="Path to storage mapping file",
+        default="persistence-mappings.yaml",
+    )
+    st_validate.add_argument(
+        "--workspace",
+        help="Workspace key to validate (default all from manifest)",
+    )
+    st_validate.set_defaults(func=cmd_storage_validate)
+
+    st_prov = storage_subs.add_parser(
+        "provision", help="Provision/format JuiceFS per mapping"
+    )
+    st_prov.add_argument("--repo-root", help="Path to Coltec control plane root")
+    st_prov.add_argument("--manifest", help="Path to manifest.yaml")
+    st_prov.add_argument(
+        "--mapping",
+        help="Path to storage mapping file",
+        default="persistence-mappings.yaml",
+    )
+    st_prov.add_argument(
+        "--workspace",
+        help="Workspace key to operate on (default all from manifest)",
+    )
+    st_prov.add_argument(
+        "--format",
+        action="store_true",
+        help="Allow formatting metadata if missing",
+    )
+    st_prov.add_argument(
+        "--mount",
+        action="store_true",
+        help="Mount after format/status to verify access",
+    )
+    st_prov.add_argument(
+        "--mountpoint",
+        default="/mnt/coltec-fs",
+        help="Mountpoint to use when --mount is set",
+    )
+    st_prov.add_argument(
+        "--cache-size-mb",
+        type=int,
+        default=1024,
+        help="JuiceFS cache size when mounting",
+    )
+    st_prov.set_defaults(func=cmd_storage_provision)
 
     return parser
 

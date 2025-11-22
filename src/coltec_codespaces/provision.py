@@ -453,6 +453,8 @@ def provision_workspace(
             "asset_repo_url": asset_repo_url,
             "config": project_entry.get("config", {}),
             "features": project_entry.get("features", []),
+            "persistence": spec_data.get("persistence", {}),
+            "networking": spec_data.get("networking", {}),
         }
 
         rendered_files = render_templates(
@@ -656,6 +658,13 @@ def update_workspace(
     project_type = env_entry["project_type"]
     asset_repo_url = env_entry["asset_repo_url"]
 
+    spec_data = build_workspace_spec_data(
+        workspace_name=env_name,
+        project_type=project_type,
+        org_slug=org_slug,
+        project_slug=project_slug,
+    )
+
     # Config/Features are on the PROJECT level, not environment level in schema?
     # provision.py:391: "config": project_entry.get("config", {})
     # So we need the project entry. `find_manifest_entry` returns a flattened dict?
@@ -674,6 +683,8 @@ def update_workspace(
         "asset_repo_url": asset_repo_url,
         "config": project_data.get("config", {}),
         "features": project_data.get("features", []),
+        "persistence": spec_data.get("persistence", {}),
+        "networking": spec_data.get("networking", {}),
     }
 
     # 2. Prepare Templates
@@ -771,12 +782,6 @@ def update_workspace(
     # Let's regenerate the spec and devcontainer.json as well to be safe.
 
     try:
-        spec_data = build_workspace_spec_data(
-            workspace_name=env_name,
-            project_type=project_type,
-            org_slug=org_slug,
-            project_slug=project_slug,
-        )
         spec_model = WorkspaceSpec.model_validate(spec_data)
 
         # Check spec drift
