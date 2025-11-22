@@ -7,9 +7,10 @@ import os
 import shutil
 import subprocess
 import sys
+import difflib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from jinja2 import Environment, FileSystemLoader
@@ -702,7 +703,7 @@ def update_workspace(
 
     # 3. Render & Diff
     rendered_files = render_templates(scaffold_roots, scaffold_context, template_env)
-    changes = []
+    changes: List[Tuple[str, Path, str, Optional[str]]] = []
 
     print(f"\n[update] Checking for drift in {workspace_path}...")
 
@@ -710,34 +711,51 @@ def update_workspace(
         target_file = workspace_path / rel_path
 
         if not target_file.exists():
-            changes.append(("ADD", rel_path, new_content))
+            changes.append(("ADD", rel_path, new_content, None))
             continue
 
         # Check content
         current_content = target_file.read_text(encoding="utf-8")
         if current_content != new_content:
-            changes.append(("MOD", rel_path, new_content))
+            changes.append(("MOD", rel_path, new_content, current_content))
 
     if not changes:
         print("[update] No changes detected. Workspace is up to date.")
         return False
 
     print(f"[update] Found {len(changes)} changes:")
-    for action, path, _ in changes:
+    for action, path, _, _ in changes:
         print(f"  {action} {path}")
 
     if dry_run:
+        # Emit simple unified diffs for modifications
+        for action, rel_path, new_content, old_content in changes:
+            if action != "MOD" or old_content is None:
+                continue
+            diff = "\n".join(
+                difflib.unified_diff(
+                    old_content.splitlines(),
+                    new_content.splitlines(),
+                    fromfile=f"a/{rel_path}",
+                    tofile=f"b/{rel_path}",
+                    lineterm="",
+                )
+            )
+            if diff:
+                print(diff)
         print("[update] Dry run complete. Pass --force to apply changes.")
         return True
 
     if not force:
-        # Simple safeguard against accidental bulk overwrites if called programmatically
-        # CLI usually handles confirmation
-        pass
+        print(
+            "[update] Changes detected. Re-run with --force to apply modifications.",
+            file=sys.stderr,
+        )
+        return True
 
     # 4. Apply Changes
     print("[update] Applying changes...")
-    for action, rel_path, content in changes:
+    for action, rel_path, content, _ in changes:
         target_path = workspace_path / rel_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(content, encoding="utf-8")

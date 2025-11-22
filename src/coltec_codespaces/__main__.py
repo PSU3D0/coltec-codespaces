@@ -8,13 +8,14 @@ import sys
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 import yaml
 
 from .spec import SpecBundle, WorkspaceSpec
 from .validate import validate_workspace_layout
 from .provision import provision_workspace, _slugify
+from .manifest import load_manifest
 
 
 def _load_spec_object(path: Path) -> Tuple[WorkspaceSpec | SpecBundle, bool]:
@@ -278,31 +279,75 @@ def cmd_workspace_validate(args: argparse.Namespace) -> None:
     sys.exit(0 if success else 1)
 
 
+def _workspace_paths_from_manifest(
+    manifest_path: Path, repo_root: Path
+) -> List[Path]:
+    manifest_data = load_manifest(manifest_path)
+    targets: List[Path] = []
+    for org_slug, org_data in (manifest_data.get("manifest") or {}).items():
+        project_dir = org_data.get("project_dir") or org_slug
+        for _, project_data in (org_data.get("projects") or {}).items():
+            for env in project_data.get("environments") or []:
+                env_name = env.get("name")
+                rel = env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                targets.append((repo_root / rel).resolve())
+    return targets
+
+
+def _resolve_target(path_str: str, repo_root: Path) -> Path:
+    p = Path(path_str)
+    if not p.is_absolute():
+        p = (repo_root / path_str).resolve()
+    return p
+
+
 def cmd_workspace_update(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root or ".").resolve()
-    target = Path(args.target).resolve()
+    manifest_path = Path(args.manifest) if args.manifest else (
+        repo_root / "codespaces/manifest.yaml"
+    )
 
-    if not target.exists():
-        print(f"Error: Target workspace '{target}' does not exist.")
-        sys.exit(1)
+    targets: List[Path]
+    if args.target:
+        targets = [_resolve_target(args.target, repo_root)]
+    else:
+        targets = _workspace_paths_from_manifest(manifest_path, repo_root)
+        if not targets:
+            print(
+                f"Error: No workspaces found in manifest {manifest_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    any_changed = False
 
     try:
         from .provision import update_workspace
 
-        changed = update_workspace(
-            workspace_path=target,
-            repo_root=repo_root,
-            manifest_path=Path(args.manifest) if args.manifest else None,
-            templates_dir=Path(args.templates_root).resolve()
-            if args.templates_root
-            else None,
-            template_overlays=[
-                Path(p).resolve() for p in (args.template_overlay or [])
-            ],
-            dry_run=args.check,
-            force=args.force,
-        )
-        if not changed:
+        for target in targets:
+            if not target.exists():
+                print(
+                    f"Warning: Target workspace '{target}' does not exist; skipping.",
+                    file=sys.stderr,
+                )
+                continue
+
+            changed = update_workspace(
+                workspace_path=target,
+                repo_root=repo_root,
+                manifest_path=manifest_path,
+                templates_dir=Path(args.templates_root).resolve()
+                if args.templates_root
+                else None,
+                template_overlays=[
+                    Path(p).resolve() for p in (args.template_overlay or [])
+                ],
+                dry_run=args.dry_run,
+                force=args.force,
+            )
+            any_changed = any_changed or changed
+
+        if not any_changed:
             print("No changes applied.")
     except Exception as e:
         print(f"Error updating workspace: {e}", file=sys.stderr)
@@ -375,7 +420,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # workspace update
     ws_up = ws_subs.add_parser("update", help="Update workspace templates from source")
-    ws_up.add_argument("--target", required=True, help="Workspace path to update")
+    ws_up.add_argument(
+        "--target",
+        help="Workspace path to update (defaults to all manifest entries)",
+    )
     ws_up.add_argument("--repo-root", help="Path to Coltec control plane root")
     ws_up.add_argument("--manifest", help="Path to manifest.yaml")
     ws_up.add_argument(
@@ -387,7 +435,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="Additional template directory to overlay. Repeatable.",
     )
-    ws_up.add_argument("--check", action="store_true", help="Dry-run/diff only")
+    ws_up.add_argument(
+        "--check",
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Dry-run/diff only",
+    )
     ws_up.add_argument("--force", action="store_true", help="Apply changes")
     ws_up.set_defaults(func=cmd_workspace_update)
 
