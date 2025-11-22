@@ -166,6 +166,21 @@ def build_workspace_spec_data(
         },
     ]
 
+    persistence_mounts = [
+        {
+            "name": "agent-context",
+            "target": "/workspace/agent-context",
+            "source": "agent-context",
+            "type": "symlink",
+        },
+        {
+            "name": "scratch",
+            "target": "/workspace/scratch",
+            "source": "scratch",
+            "type": "symlink",
+        },
+    ]
+
     # We use isoformat with Z to indicate UTC
     now_str = (
         datetime.now(timezone.utc)
@@ -200,6 +215,16 @@ def build_workspace_spec_data(
                 "extensions": {"recommended": extensions},
                 "settings": {"values": settings},
             },
+        },
+        "persistence": {
+            "enabled": True,
+            "scope": "project",
+            "mounts": persistence_mounts,
+        },
+        "networking": {
+            "enabled": True,
+            "hostname_prefix": "dev-",
+            "tags": ["tag:devcontainer"],
         },
         "generated_at": now_str,
     }

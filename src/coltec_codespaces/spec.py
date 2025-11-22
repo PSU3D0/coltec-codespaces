@@ -16,6 +16,52 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 ALLOWED_MOUNT_TYPES = {"bind", "volume", "tmpfs"}
 
 
+class NetworkingSpec(BaseModel):
+    """Networking feature toggle and metadata."""
+
+    enabled: bool = False
+    hostname_prefix: str = "dev-"
+    tags: List[str] = Field(default_factory=lambda: ["tag:devcontainer"])
+
+
+class PersistenceMount(BaseModel):
+    """Logical mapping of a JuiceFS subpath into the workspace."""
+
+    name: str
+    target: str
+    source: str
+    type: str = "symlink"  # symlink or bind
+
+    @field_validator("target")
+    @classmethod
+    def _absolute_target(cls, value: str) -> str:
+        if not value.startswith("/"):
+            raise ValueError("persistence mount target must be an absolute path")
+        return value
+
+    @field_validator("type")
+    @classmethod
+    def _allowed_type(cls, value: str) -> str:
+        if value not in {"symlink", "bind"}:
+            raise ValueError("persistence mount type must be 'symlink' or 'bind'")
+        return value
+
+
+class PersistenceSpec(BaseModel):
+    """Persistence feature toggle and mount definitions."""
+
+    enabled: bool = False
+    scope: str = Field("project", description="project or environment")
+    mounts: List[PersistenceMount] = Field(default_factory=list)
+
+    @field_validator("scope")
+    @classmethod
+    def _scope_allowed(cls, value: str) -> str:
+        if value not in {"project", "environment"}:
+            raise ValueError("persistence.scope must be 'project' or 'environment'")
+        return value
+
+
 class ImageRef(BaseModel):
     """Reference to a pre-built devcontainer image."""
 
@@ -233,6 +279,8 @@ class WorkspaceSpec(BaseModel):
         description="Host mounts that scripts/provisioners should honor",
     )
     secrets: List[SecretMount] = Field(default_factory=list)
+    networking: NetworkingSpec = Field(default_factory=NetworkingSpec)
+    persistence: PersistenceSpec = Field(default_factory=PersistenceSpec)
     generated_at: datetime = Field(
         default_factory=lambda: datetime.now(tz=timezone.utc)
     )
@@ -266,6 +314,17 @@ class WorkspaceSpec(BaseModel):
         merged.mounts.extend(self.mounts)
         payload = merged.to_devcontainer_dict()
         payload["name"] = self.name
+        # Inject feature flags for downstream templates/scripts
+        payload.setdefault("features", {})["coltec:networking"] = {
+            "enabled": self.networking.enabled,
+            "hostname_prefix": self.networking.hostname_prefix,
+            "tags": self.networking.tags,
+        }
+        payload.setdefault("features", {})["coltec:persistence"] = {
+            "enabled": self.persistence.enabled,
+            "scope": self.persistence.scope,
+            "mounts": [mount.model_dump() for mount in self.persistence.mounts],
+        }
         if self.devcontainer.image.digest:
             payload.setdefault("build", {})["args"] = {
                 "BASE_DIGEST": self.devcontainer.image.digest
@@ -334,6 +393,23 @@ def example_spec() -> WorkspaceSpec:
                 ),
             ),
         ),
+        persistence=PersistenceSpec(
+            enabled=True,
+            scope="project",
+            mounts=[
+                PersistenceMount(
+                    name="agent-context",
+                    target="/workspace/agent-context",
+                    source="agent-context",
+                ),
+                PersistenceMount(
+                    name="scratch",
+                    target="/workspace/scratch",
+                    source="scratch",
+                ),
+            ],
+        ),
+        networking=NetworkingSpec(enabled=True, hostname_prefix="dev-"),
     )
 
 

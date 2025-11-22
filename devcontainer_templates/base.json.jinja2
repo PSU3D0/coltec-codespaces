@@ -26,6 +26,23 @@
       "settings": {{ settings | tojson(indent=2) }}
     }
   },
+  "containerEnv": {
+    "WORKSPACE_NAME": "{{ workspace_name }}",
+    "WORKSPACE_ORG": "{{ workspace_org }}",
+    "WORKSPACE_PROJECT": "{{ workspace_project }}",
+    "WORKSPACE_ENV": "{{ workspace_env }}",
+    "NETWORKING_ENABLED": "{{ networking_enabled }}",
+    "PERSISTENCE_ENABLED": "{{ persistence_enabled }}",
+    "JUICEFS_CACHE_SIZE_MB": "{{ juicefs_cache_size_mb }}",
+    "JUICEFS_SCOPE": "{{ juicefs_scope }}",
+    "TAILSCALE_AUTH_KEY": "{{ env.get('TAILSCALE_AUTH_KEY', '') }}",
+    "JUICEFS_DSN": "{{ env.get('JUICEFS_DSN', '') }}",
+    "JUICEFS_BUCKET": "{{ env.get('JUICEFS_BUCKET', '') }}",
+    "JUICEFS_ACCESS_KEY_ID": "{{ env.get('JUICEFS_ACCESS_KEY_ID', '') }}",
+    "JUICEFS_SECRET_ACCESS_KEY": "{{ env.get('JUICEFS_SECRET_ACCESS_KEY', '') }}",
+    "JUICEFS_S3_ENDPOINT": "{{ env.get('JUICEFS_S3_ENDPOINT', '') }}",
+    "ALLOW_JFS_FORMAT": "{{ env.get('ALLOW_JFS_FORMAT', '') }}"
+  },
   "postCreateCommand": "./.devcontainer/scripts/post-create.sh",
   "postStartCommand": "./.devcontainer/scripts/post-start.sh"
 }
