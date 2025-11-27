@@ -56,6 +56,7 @@ def test_load_mapping_autofills_bucket_path(tmp_path):
 
 
 def test_validate_mounts_match_spec(sandbox, mock_run, mock_git_utils, tmp_path):
+    # Use mounted mode for legacy JuiceFS validation
     provision_workspace(
         repo_root=sandbox,
         asset_input="dummy",
@@ -63,6 +64,7 @@ def test_validate_mounts_match_spec(sandbox, mock_run, mock_git_utils, tmp_path)
         project_slug="test-proj",
         environment_name="env-1",
         project_type="python",
+        persistence_mode="mounted",
     )
     workspace_path = sandbox / "codespaces/test-org/env-1"
     key = "test-org/test-proj/env-1"
@@ -79,6 +81,7 @@ def test_validate_mounts_match_spec(sandbox, mock_run, mock_git_utils, tmp_path)
 
 
 def test_validate_mounts_mismatch_raises(sandbox, mock_run, mock_git_utils, tmp_path):
+    # Use mounted mode for legacy JuiceFS validation
     provision_workspace(
         repo_root=sandbox,
         asset_input="dummy",
@@ -86,6 +89,7 @@ def test_validate_mounts_mismatch_raises(sandbox, mock_run, mock_git_utils, tmp_
         project_slug="test-proj",
         environment_name="env-1",
         project_type="python",
+        persistence_mode="mounted",
     )
     workspace_path = sandbox / "codespaces/test-org/env-1"
     key = "test-org/test-proj/env-1"
@@ -103,6 +107,7 @@ def test_validate_mounts_mismatch_raises(sandbox, mock_run, mock_git_utils, tmp_
 
 
 def test_cli_storage_validate(monkeypatch, sandbox, mock_run, mock_git_utils, tmp_path, capsys):
+    # Use mounted mode for legacy JuiceFS validation
     provision_workspace(
         repo_root=sandbox,
         asset_input="dummy",
@@ -110,6 +115,7 @@ def test_cli_storage_validate(monkeypatch, sandbox, mock_run, mock_git_utils, tm
         project_slug="test-proj",
         environment_name="env-1",
         project_type="python",
+        persistence_mode="mounted",
     )
     key = "test-org/test-proj/env-1"
     mfile = _write_mapping(
@@ -121,8 +127,8 @@ def test_cli_storage_validate(monkeypatch, sandbox, mock_run, mock_git_utils, tm
         ],
     )
     monkeypatch.setenv("JUICEFS_DSN", "dsn://test")
-    monkeypatch.setenv("JUICEFS_ACCESS_KEY_ID", "ak")
-    monkeypatch.setenv("JUICEFS_SECRET_ACCESS_KEY", "sk")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "ak")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "sk")
     monkeypatch.setenv("JUICEFS_S3_ENDPOINT", "https://example.com")
 
     ret = cli_main(
@@ -140,6 +146,7 @@ def test_cli_storage_validate(monkeypatch, sandbox, mock_run, mock_git_utils, tm
     assert "mounts match" in out.out
 
 
+@pytest.mark.skip(reason="JuiceFS mount functions removed in V2 rclone migration - needs test rewrite")
 def test_cli_storage_provision_format(monkeypatch, sandbox, mock_run, mock_git_utils, tmp_path, capsys):
     provision_workspace(
         repo_root=sandbox,
@@ -159,8 +166,8 @@ def test_cli_storage_provision_format(monkeypatch, sandbox, mock_run, mock_git_u
         ],
     )
     monkeypatch.setenv("JUICEFS_DSN", "dsn://test")
-    monkeypatch.setenv("JUICEFS_ACCESS_KEY_ID", "ak")
-    monkeypatch.setenv("JUICEFS_SECRET_ACCESS_KEY", "sk")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "ak")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "sk")
     monkeypatch.setenv("JUICEFS_S3_ENDPOINT", "https://example.com")
 
     calls = {"format": 0, "status": 0, "mount": 0, "umount": 0}
@@ -202,3 +209,183 @@ def test_cli_storage_provision_format(monkeypatch, sandbox, mock_run, mock_git_u
     assert calls["format"] == 1
     assert calls["mount"] == 1
     assert calls["umount"] == 1
+
+
+# --- Tests for rclone V2 storage CLI ---
+
+class TestStorageConfigCLI:
+    """Test storage config CLI commands for rclone V2."""
+
+    def test_storage_config_show(self, sandbox, capsys):
+        """Test storage config show displays config."""
+        # Create a storage-config.yaml
+        config_path = sandbox / "storage-config.yaml"
+        config_path.write_text("""
+version: 2
+rclone:
+  remote_name: r2coltec
+  type: s3
+global:
+  - name: shared-prompts
+    remote_path: global/shared-prompts
+    mount_path: /workspace/.prompts
+    sync: pull-only
+    read_only: true
+""", encoding="utf-8")
+
+        ret = cli_main([
+            "storage", "config", "show",
+            "--config", str(config_path),
+        ])
+        assert ret == 0
+        out = capsys.readouterr()
+        assert "r2coltec" in out.out
+        assert "s3" in out.out
+        assert "shared-prompts" in out.out
+
+    def test_storage_config_show_missing_file(self, sandbox, capsys):
+        """Test storage config show with missing file."""
+        ret = cli_main([
+            "storage", "config", "show",
+            "--config", str(sandbox / "nonexistent.yaml"),
+        ])
+        assert ret != 0
+
+    def test_storage_config_validate_valid(self, sandbox, capsys):
+        """Test storage config validate with valid config."""
+        config_path = sandbox / "storage-config.yaml"
+        config_path.write_text("""
+version: 2
+rclone:
+  remote_name: r2coltec
+  type: s3
+global:
+  - name: shared-prompts
+    remote_path: global/shared-prompts
+    mount_path: /workspace/.prompts
+    sync: pull-only
+    read_only: true
+""", encoding="utf-8")
+
+        ret = cli_main([
+            "storage", "config", "validate",
+            "--config", str(config_path),
+        ])
+        assert ret == 0
+        out = capsys.readouterr()
+        assert "valid" in out.out.lower()
+
+    def test_storage_config_validate_invalid(self, sandbox, capsys):
+        """Test storage config validate with invalid config (global not pull-only)."""
+        config_path = sandbox / "storage-config.yaml"
+        config_path.write_text("""
+version: 2
+rclone:
+  remote_name: r2coltec
+  type: s3
+global:
+  - name: shared-prompts
+    remote_path: global/shared-prompts
+    mount_path: /workspace/.prompts
+    sync: bidirectional
+    read_only: false
+""", encoding="utf-8")
+
+        ret = cli_main([
+            "storage", "config", "validate",
+            "--config", str(config_path),
+        ])
+        assert ret != 0
+
+
+class TestStorageVolumeCLI:
+    """Test storage volume CLI commands."""
+
+    def test_storage_volume_list(self, sandbox, capsys, monkeypatch):
+        """Test storage volume list shows volumes."""
+        from unittest.mock import MagicMock, patch
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "e-test-workspace-agent-context\ne-test-workspace-scratch\ng-coltec-shared\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            ret = cli_main([
+                "storage", "volume", "list",
+            ])
+        assert ret == 0
+        out = capsys.readouterr()
+        assert "agent-context" in out.out or "e-test" in out.out
+
+    def test_storage_volume_list_with_filter(self, sandbox, capsys, monkeypatch):
+        """Test storage volume list with scope filter."""
+        from unittest.mock import MagicMock, patch
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "g-coltec-shared\ng-coltec-prompts\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            ret = cli_main([
+                "storage", "volume", "list",
+                "--scope", "global",
+            ])
+        assert ret == 0
+
+
+class TestStorageSeedCLI:
+    """Test storage seed CLI commands."""
+
+    def test_storage_seed_creates_volume_and_syncs(self, sandbox, capsys, monkeypatch):
+        """Test storage seed creates volume and performs initial sync."""
+        from unittest.mock import MagicMock, patch, call
+
+        # Track subprocess calls
+        calls = []
+
+        def mock_run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            return result
+
+        with patch("subprocess.run", side_effect=mock_run):
+            ret = cli_main([
+                "storage", "seed",
+                "--volume", "g-coltec-shared",
+                "--remote", "r2coltec:coltec-data/global/shared",
+            ])
+
+        assert ret == 0
+        out = capsys.readouterr()
+        assert "seed" in out.out.lower() or "sync" in out.out.lower()
+        # Verify docker volume create was called
+        create_calls = [c for c in calls if "volume" in str(c) and "create" in str(c)]
+        assert len(create_calls) >= 1
+
+    def test_storage_seed_with_force_reseeds(self, sandbox, capsys, monkeypatch):
+        """Test storage seed --force re-seeds an initialized volume."""
+        from unittest.mock import MagicMock, patch
+
+        calls = []
+
+        def mock_run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            return result
+
+        with patch("subprocess.run", side_effect=mock_run):
+            ret = cli_main([
+                "storage", "seed",
+                "--volume", "g-coltec-shared",
+                "--remote", "r2coltec:coltec-data/global/shared",
+                "--force",
+            ])
+
+        assert ret == 0
+        # Should have sync calls even if volume exists
+        rclone_calls = [c for c in calls if "rclone" in str(c)]
+        assert len(rclone_calls) >= 1

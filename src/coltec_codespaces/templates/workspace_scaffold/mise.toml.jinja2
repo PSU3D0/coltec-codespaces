@@ -1,0 +1,44 @@
+[tools]
+# Core tools for the workspace
+python = "{{ config.get('python_version', '3.12') }}"
+uv = "latest"
+node = "lts"
+rclone = "1.65.0"
+"npm:@anthropic-ai/claude-code" = "latest"
+"npm:@openai/codex" = "latest"
+"npm:opencode-ai" = "latest"
+"npm:@devcontainers/cli" = "latest"
+
+[env]
+PYTHONUNBUFFERED = "1"
+PYTHONDONTWRITEBYTECODE = "1"
+
+[settings]
+python.uv_venv_auto = true
+
+[tasks.info]
+description = "Show workspace info"
+run = "echo 'Workspace: {{ workspace_name }} ({{ org_slug }}/{{ project_slug }})'"
+
+[tasks.shell]
+description = "Open a shell in the codebase submodule"
+run = "cd codebase && $SHELL"
+
+[tasks."human:setup-env"]
+description = "Install optional human shell tooling into .human/"
+run = ".devcontainer/scripts/human-setup.sh"
+
+{% if persistence.enabled and persistence.mode == 'replicated' %}
+# Sync management tasks (replicated persistence mode)
+[tasks."sync:status"]
+description = "Check sync daemon status"
+run = "pgrep -f sync-daemon.sh && echo 'Sync daemon running' || echo 'Sync daemon not running'"
+
+[tasks."sync:logs"]
+description = "View sync daemon logs"
+run = "tail -100 ~/.local/state/coltec-persistence/{{ workspace_name }}/logs/sync-daemon.log 2>/dev/null || echo 'No logs yet'"
+
+[tasks."sync:now"]
+description = "Trigger immediate sync (push to R2)"
+run = "rclone sync /workspace ${RCLONE_REMOTE_NAME:-r2coltec}:${RCLONE_BUCKET:-coltec-codespaces-data}/workspaces/{{ org_slug }}/{{ project_slug }}/{{ env_slug }}/workspace --fast-list --progress"
+{% endif %}

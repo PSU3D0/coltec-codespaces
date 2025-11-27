@@ -18,15 +18,16 @@ from .provision import provision_workspace, _slugify
 from .manifest import load_manifest
 from .storage import (
     load_storage_mapping,
+    load_storage_config,
     StorageMapping,
     validate_mounts_match_spec,
     ensure_env_vars_present,
     JuiceFSCommands,
     juicefs_status,
+    juicefs_get_uuid,
     juicefs_format,
-    juicefs_mount,
-    juicefs_umount,
 )
+from .spec import StorageConfig
 
 
 def _load_spec_object(path: Path) -> Tuple[WorkspaceSpec | SpecBundle, bool]:
@@ -290,9 +291,7 @@ def cmd_workspace_validate(args: argparse.Namespace) -> None:
     sys.exit(0 if success else 1)
 
 
-def _workspace_paths_from_manifest(
-    manifest_path: Path, repo_root: Path
-) -> List[Path]:
+def _workspace_paths_from_manifest(manifest_path: Path, repo_root: Path) -> List[Path]:
     manifest_data = load_manifest(manifest_path)
     targets: List[Path] = []
     for org_slug, org_data in (manifest_data.get("manifest") or {}).items():
@@ -300,7 +299,9 @@ def _workspace_paths_from_manifest(
         for _, project_data in (org_data.get("projects") or {}).items():
             for env in project_data.get("environments") or []:
                 env_name = env.get("name")
-                rel = env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                rel = (
+                    env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                )
                 targets.append((repo_root / rel).resolve())
     return targets
 
@@ -314,8 +315,10 @@ def _resolve_target(path_str: str, repo_root: Path) -> Path:
 
 def cmd_workspace_update(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root or ".").resolve()
-    manifest_path = Path(args.manifest) if args.manifest else (
-        repo_root / "codespaces/manifest.yaml"
+    manifest_path = (
+        Path(args.manifest)
+        if args.manifest
+        else (repo_root / "codespaces/manifest.yaml")
     )
 
     targets: List[Path]
@@ -383,7 +386,10 @@ def _storage_targets(
                     env_name = env.get("name")
                     key = f"{org_slug}/{project_slug}/{env_name}"
                     if key == workspace:
-                        rel = env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                        rel = (
+                            env.get("workspace_path")
+                            or f"codespaces/{project_dir}/{env_name}"
+                        )
                         return {key: (repo_root / rel).resolve()}
         raise RuntimeError(f"Workspace '{workspace}' not found in manifest")
 
@@ -396,7 +402,10 @@ def _storage_targets(
                 env_name = env.get("name")
                 key = f"{org_slug}/{project_slug}/{env_name}"
                 if key in mapping.workspaces:
-                    rel = env.get("workspace_path") or f"codespaces/{project_dir}/{env_name}"
+                    rel = (
+                        env.get("workspace_path")
+                        or f"codespaces/{project_dir}/{env_name}"
+                    )
                     targets[key] = (repo_root / rel).resolve()
     return targets
 
@@ -405,7 +414,24 @@ def _storage_env(mapping: StorageMapping) -> dict:
     import os
 
     env = dict(os.environ)
-    required = [mapping.metadata_dsn_env, "JUICEFS_ACCESS_KEY_ID", "JUICEFS_SECRET_ACCESS_KEY"]
+
+    # Normalization / Fallbacks
+    # 1. Metadata DSN
+    dsn_var = mapping.metadata_dsn_env
+    if not env.get(dsn_var):
+        # Try fallback to JUICEFS_METADATA_URI if standard DSN is missing
+        if env.get("JUICEFS_METADATA_URI"):
+            env[dsn_var] = env["JUICEFS_METADATA_URI"]
+
+    # Fix postgres scheme (postgresql:// -> postgres://)
+    if env.get(dsn_var) and env[dsn_var].startswith("postgresql://"):
+        env[dsn_var] = env[dsn_var].replace("postgresql://", "postgres://", 1)
+
+    required = [
+        mapping.metadata_dsn_env,
+        "S3_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+    ]
     if mapping.s3_endpoint_env:
         required.append(mapping.s3_endpoint_env)
     ensure_env_vars_present(env, required)
@@ -417,7 +443,11 @@ def cmd_storage_validate(args: argparse.Namespace) -> None:
     mapping_path = Path(args.mapping).resolve()
     mapping = load_storage_mapping(mapping_path)
     env = _storage_env(mapping)
-    manifest_path = Path(args.manifest) if args.manifest else repo_root / "codespaces" / "manifest.yaml"
+    manifest_path = (
+        Path(args.manifest)
+        if args.manifest
+        else repo_root / "codespaces" / "manifest.yaml"
+    )
     targets = _storage_targets(repo_root, manifest_path, mapping, args.workspace)
 
     if not targets:
@@ -438,7 +468,11 @@ def cmd_storage_provision(args: argparse.Namespace) -> None:
     mapping_path = Path(args.mapping).resolve()
     mapping = load_storage_mapping(mapping_path)
     env = _storage_env(mapping)
-    manifest_path = Path(args.manifest) if args.manifest else repo_root / "codespaces" / "manifest.yaml"
+    manifest_path = (
+        Path(args.manifest)
+        if args.manifest
+        else repo_root / "codespaces" / "manifest.yaml"
+    )
     targets = _storage_targets(repo_root, manifest_path, mapping, args.workspace)
     if not targets:
         print("No workspaces to provision (mapping/manifest intersection empty).")
@@ -450,41 +484,245 @@ def cmd_storage_provision(args: argparse.Namespace) -> None:
         dsn = env[mapping.metadata_dsn_env]
         endpoint = env.get(mapping.s3_endpoint_env or "", "") or None
         ok = juicefs_status(commands, dsn, env)
+        uuid = None
+
         if not ok:
             if not args.format:
                 raise RuntimeError(
                     f"{key}: metadata not formatted; re-run with --format to initialize"
                 )
-            juicefs_format(
+            # Format returns UUID now (if I updated format to return it, but I added get_uuid separate)
+            # Actually, I updated format to return it, but let's use get_uuid for consistency
+            # or rely on format return if I kept that change.
+            # I kept the change to juicefs_format returning Optional[str].
+            uuid = juicefs_format(
                 commands,
                 dsn=dsn,
                 bucket=mapping.bucket,
-                access_key=env["JUICEFS_ACCESS_KEY_ID"],
-                secret_key=env["JUICEFS_SECRET_ACCESS_KEY"],
+                access_key=env["S3_ACCESS_KEY_ID"],
+                secret_key=env["S3_SECRET_ACCESS_KEY"],
                 endpoint=endpoint,
                 filesystem=mapping.filesystem,
                 env=env,
             )
-            print(f"[provision] {key}: formatted JuiceFS metadata")
+            print(f"[provision] {key}: formatted JuiceFS metadata (UUID: {uuid})")
         else:
             print(f"[provision] {key}: metadata already initialized")
+            # Fetch UUID for existing FS
+            uuid = juicefs_get_uuid(commands, dsn, env)
+
+        # Persist UUID to mapping if present
+        if uuid and args.mapping:
+            try:
+                current_mapping = load_storage_mapping(mapping_path)
+                if key in current_mapping.workspaces:
+                    changed = False
+                    for m in current_mapping.workspaces[key].mounts:
+                        if m.juicefs_uuid != uuid:
+                            m.juicefs_uuid = uuid
+                            changed = True
+
+                    if changed:
+                        data = current_mapping.model_dump(
+                            exclude_none=True, mode="json"
+                        )
+                        mapping_path.write_text(
+                            yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
+                        )
+                        print(f"[provision] Updated {mapping_path} with UUID {uuid}")
+            except Exception as e:
+                print(f"Warning: Failed to persist UUID to mapping: {e}")
 
         if args.mount:
-            mountpoint = Path(args.mountpoint)
-            juicefs_mount(
-                commands,
-                dsn=dsn,
-                mountpoint=mountpoint,
-                bucket=mapping.bucket,
-                access_key=env["JUICEFS_ACCESS_KEY_ID"],
-                secret_key=env["JUICEFS_SECRET_ACCESS_KEY"],
-                endpoint=endpoint,
-                cache_size_mb=args.cache_size_mb,
-                env=env,
+            print(
+                f"[provision] {key}: mount/umount not supported with docker plugin integration."
             )
-            print(f"[provision] {key}: mounted at {mountpoint}")
-            juicefs_umount(commands, mountpoint, env)
-            print(f"[provision] {key}: unmounted {mountpoint}")
+
+
+def cmd_storage_generate(args: argparse.Namespace) -> None:
+    from .storage import generate_storage_mapping
+
+    repo_root = Path(args.repo_root or ".").resolve()
+    manifest_path = (
+        Path(args.manifest)
+        if args.manifest
+        else repo_root / "codespaces" / "manifest.yaml"
+    )
+    output_path = Path(args.output).resolve()
+
+    mapping = generate_storage_mapping(
+        repo_root=repo_root,
+        manifest_path=manifest_path,
+        bucket=args.bucket,
+        filesystem=args.filesystem,
+        metadata_dsn_env=args.metadata_dsn_env,
+        s3_endpoint_env=args.s3_endpoint_env,
+        root_prefix=args.root_prefix,
+    )
+
+    # model_dump(exclude_none=True) to keep it clean, but ensure defaults are handled
+    data = mapping.model_dump(exclude_none=True, mode="json")
+    yaml_str = yaml.safe_dump(data, sort_keys=False)
+    output_path.write_text(yaml_str, encoding="utf-8")
+    print(f"Generated storage mapping at {output_path}")
+
+
+def cmd_storage_config_show(args: argparse.Namespace) -> int:
+    """Show storage configuration."""
+    config_path = Path(args.config).resolve()
+    try:
+        config = load_storage_config(config_path)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error loading config: {e}", file=sys.stderr)
+        return 1
+
+    # Display config details
+    print(f"Storage Config: {config_path}")
+    print(f"  Version: {config.version}")
+    print(f"  Remote: {config.rclone.remote_name}")
+    print(f"  Type: {config.rclone.type}")
+    if config.rclone.options:
+        print("  Options:")
+        for key, val in config.rclone.options.items():
+            # Mask secrets
+            display_val = "***" if "secret" in key.lower() or "key" in key.lower() else val
+            print(f"    {key}: {display_val}")
+
+    if config.global_volumes:
+        print(f"  Global volumes: {len(config.global_volumes)}")
+        for vol in config.global_volumes:
+            print(f"    - {vol.name}: {vol.remote_path} -> {vol.mount_path}")
+
+    if config.projects:
+        print(f"  Projects: {list(config.projects.keys())}")
+        for proj, vols in config.projects.items():
+            print(f"    {proj}: {len(vols)} volumes")
+
+    return 0
+
+
+def cmd_storage_config_validate(args: argparse.Namespace) -> int:
+    """Validate storage configuration."""
+    config_path = Path(args.config).resolve()
+    try:
+        config = load_storage_config(config_path)
+        print(f"Config {config_path} is valid (version {config.version})")
+        return 0
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Validation error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_storage_volume_list(args: argparse.Namespace) -> int:
+    """List Docker volumes for persistence."""
+    scope = getattr(args, "scope", None)
+
+    # Use docker volume ls to list volumes
+    cmd = ["docker", "volume", "ls", "--format", "{{.Name}}"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Error listing volumes: {result.stderr}", file=sys.stderr)
+        return 1
+
+    volumes = [v.strip() for v in result.stdout.strip().split("\n") if v.strip()]
+
+    # Filter by scope if specified
+    if scope:
+        prefix_map = {
+            "global": "g-",
+            "project": "p-",
+            "environment": "e-",
+        }
+        prefix = prefix_map.get(scope)
+        if prefix:
+            volumes = [v for v in volumes if v.startswith(prefix)]
+
+    if not volumes:
+        print("No persistence volumes found.")
+        return 0
+
+    print("Persistence volumes:")
+    for vol in sorted(volumes):
+        # Determine scope from prefix
+        if vol.startswith("g-"):
+            vol_scope = "global"
+        elif vol.startswith("p-"):
+            vol_scope = "project"
+        elif vol.startswith("e-"):
+            vol_scope = "environment"
+        else:
+            vol_scope = "other"
+        print(f"  [{vol_scope}] {vol}")
+
+    return 0
+
+
+def cmd_storage_seed(args: argparse.Namespace) -> int:
+    """Seed a Docker volume with data from remote storage."""
+    volume_name = args.volume
+    remote_path = args.remote
+    force = getattr(args, "force", False)
+
+    # Create volume if it doesn't exist
+    print(f"[seed] Ensuring volume '{volume_name}' exists...")
+    create_cmd = ["docker", "volume", "create", volume_name]
+    result = subprocess.run(create_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error creating volume: {result.stderr}", file=sys.stderr)
+        return 1
+
+    # Check if volume is already initialized (has marker file)
+    if not force:
+        check_cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{volume_name}:/data:ro",
+            "alpine:latest",
+            "test", "-f", "/data/.coltec-initialized",
+        ]
+        check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+        if check_result.returncode == 0:
+            print(f"[seed] Volume '{volume_name}' already initialized. Use --force to reseed.")
+            return 0
+
+    # Sync data from remote using rclone in docker
+    print(f"[seed] Syncing from '{remote_path}' to volume '{volume_name}'...")
+    sync_cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{volume_name}:/data",
+        "-e", "RCLONE_CONFIG_R2COLTEC_TYPE=s3",
+        "-e", "RCLONE_CONFIG_R2COLTEC_PROVIDER=Cloudflare",
+        "-e", "RCLONE_CONFIG_R2COLTEC_ACCESS_KEY_ID",
+        "-e", "RCLONE_CONFIG_R2COLTEC_SECRET_ACCESS_KEY",
+        "-e", "RCLONE_CONFIG_R2COLTEC_ENDPOINT",
+        "rclone/rclone:latest",
+        "sync", remote_path, "/data",
+        "--verbose",
+    ]
+    sync_result = subprocess.run(sync_cmd, capture_output=True, text=True)
+    if sync_result.returncode != 0:
+        print(f"Error syncing: {sync_result.stderr}", file=sys.stderr)
+        return 1
+
+    # Mark volume as initialized
+    mark_cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{volume_name}:/data",
+        "alpine:latest",
+        "sh", "-c", f"date -Iseconds > /data/.coltec-initialized",
+    ]
+    mark_result = subprocess.run(mark_cmd, capture_output=True, text=True)
+    if mark_result.returncode != 0:
+        print(f"Warning: Failed to mark volume as initialized: {mark_result.stderr}", file=sys.stderr)
+
+    print(f"[seed] Successfully seeded volume '{volume_name}' from '{remote_path}'")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -582,6 +820,29 @@ def build_parser() -> argparse.ArgumentParser:
     storage = subparsers.add_parser("storage", help="Storage operations")
     storage_subs = storage.add_subparsers(dest="storage_command", required=True)
 
+    st_gen = storage_subs.add_parser(
+        "generate", help="Generate storage mapping from workspace specs"
+    )
+    st_gen.add_argument("--repo-root", help="Path to Coltec control plane root")
+    st_gen.add_argument("--manifest", help="Path to manifest.yaml")
+    st_gen.add_argument(
+        "-o", "--output", default="persistence-mappings.yaml", help="Output path"
+    )
+    st_gen.add_argument("--bucket", required=True, help="S3 Bucket name")
+    st_gen.add_argument("--filesystem", required=True, help="JuiceFS filesystem name")
+    st_gen.add_argument(
+        "--root-prefix", default="workspaces", help="Root prefix in bucket"
+    )
+    st_gen.add_argument(
+        "--metadata-dsn-env", default="JUICEFS_DSN", help="Env var for Metadata DSN"
+    )
+    st_gen.add_argument(
+        "--s3-endpoint-env",
+        default="JUICEFS_S3_ENDPOINT",
+        help="Env var for S3 Endpoint",
+    )
+    st_gen.set_defaults(func=cmd_storage_generate)
+
     st_validate = storage_subs.add_parser(
         "validate", help="Validate storage mapping and env for workspaces"
     )
@@ -635,14 +896,92 @@ def build_parser() -> argparse.ArgumentParser:
     )
     st_prov.set_defaults(func=cmd_storage_provision)
 
+    # storage config subcommand group
+    st_config = storage_subs.add_parser(
+        "config", help="Manage V2 storage configuration"
+    )
+    st_config_subs = st_config.add_subparsers(dest="config_command", required=True)
+
+    st_config_show = st_config_subs.add_parser("show", help="Show storage configuration")
+    st_config_show.add_argument(
+        "--config",
+        required=True,
+        help="Path to storage-config.yaml",
+    )
+    st_config_show.set_defaults(func=cmd_storage_config_show)
+
+    st_config_validate = st_config_subs.add_parser(
+        "validate", help="Validate storage configuration"
+    )
+    st_config_validate.add_argument(
+        "--config",
+        required=True,
+        help="Path to storage-config.yaml",
+    )
+    st_config_validate.set_defaults(func=cmd_storage_config_validate)
+
+    # storage volume subcommand group
+    st_volume = storage_subs.add_parser(
+        "volume", help="Manage persistence volumes"
+    )
+    st_volume_subs = st_volume.add_subparsers(dest="volume_command", required=True)
+
+    st_volume_list = st_volume_subs.add_parser("list", help="List persistence volumes")
+    st_volume_list.add_argument(
+        "--scope",
+        choices=["global", "project", "environment"],
+        help="Filter by volume scope",
+    )
+    st_volume_list.set_defaults(func=cmd_storage_volume_list)
+
+    # storage seed command
+    st_seed = storage_subs.add_parser(
+        "seed", help="Seed a Docker volume with data from remote storage"
+    )
+    st_seed.add_argument(
+        "--volume",
+        required=True,
+        help="Name of the Docker volume to seed",
+    )
+    st_seed.add_argument(
+        "--remote",
+        required=True,
+        help="Remote path (e.g., r2coltec:bucket/path)",
+    )
+    st_seed.add_argument(
+        "--force",
+        action="store_true",
+        help="Force reseed even if volume is already initialized",
+    )
+    st_seed.set_defaults(func=cmd_storage_seed)
+
+    # --- Up Command ---
+    from .up import cmd_up
+
+    up_parser = subparsers.add_parser("up", help="Start a workspace devcontainer")
+    up_parser.add_argument(
+        "target", help="Workspace path or name (e.g. psu3d0/leap-landing-dev)"
+    )
+    up_parser.add_argument("--repo-root", help="Path to Coltec control plane root")
+    up_parser.add_argument("--manifest", help="Path to manifest.yaml")
+    up_parser.add_argument(
+        "--mapping", default="persistence-mappings.yaml", help="Path to storage mapping"
+    )
+    up_parser.add_argument(
+        "--rebuild", action="store_true",
+        help="Force rebuild container (removes existing and builds without cache)"
+    )
+    up_parser.set_defaults(func=cmd_up)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.func(args)
-    return 0
+    result = args.func(args)
+    # Commands may return an exit code; treat None as success
+    return result if isinstance(result, int) else 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# rclone configuration script for replicated persistence
+#
+# This script verifies rclone is available and credentials are set.
+# rclone configuration is passed via containerEnv environment variables
+# (RCLONE_CONFIG_*) which are already available in the container.
+#
+# The sync-daemon.sh reads these vars directly from the environment.
+
+LOG_PREFIX="[rclone-configure]"
+
+echo "${LOG_PREFIX} Configuring rclone for persistence..."
+
+# Check if rclone is installed
+if ! command -v rclone &> /dev/null; then
+    echo "${LOG_PREFIX} rclone not found, attempting to install..."
+
+    # Fallback installation if not in base image
+    RCLONE_VERSION="${RCLONE_VERSION:-1.65.0}"
+    TMP_DIR="$(mktemp -d)"
+    trap 'rm -rf "${TMP_DIR}"' EXIT
+
+    echo "${LOG_PREFIX} Downloading rclone v${RCLONE_VERSION}..."
+    curl -fsSL "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip" \
+        -o "${TMP_DIR}/rclone.zip"
+
+    echo "${LOG_PREFIX} Extracting and installing..."
+    # Ensure unzip is available
+    if ! command -v unzip &> /dev/null; then
+        echo "${LOG_PREFIX} Installing unzip..."
+        sudo apt-get update -qq && sudo apt-get install -y -qq unzip
+    fi
+    unzip -q "${TMP_DIR}/rclone.zip" -d "${TMP_DIR}"
+    sudo install -m 0755 "${TMP_DIR}/rclone-v${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+
+    echo "${LOG_PREFIX} rclone installed successfully"
+fi
+
+# Verify rclone is available
+rclone version
+
+# Check required environment variables
+REQUIRED_VARS=(
+    "S3_ACCESS_KEY_ID"
+    "S3_SECRET_ACCESS_KEY"
+    "JUICEFS_S3_ENDPOINT"
+)
+
+for var in "${REQUIRED_VARS[@]}"; do
+    if [ -z "${!var:-}" ]; then
+        echo "${LOG_PREFIX} ERROR: Required environment variable ${var} is not set"
+        exit 1
+    fi
+done
+
+# Get remote configuration from environment
+REMOTE_NAME="${RCLONE_REMOTE_NAME:-r2coltec}"
+# RCLONE_BUCKET may be a full URL - extract just the bucket name
+_raw_bucket="${RCLONE_BUCKET:-coltec-codespaces-data}"
+if [[ "$_raw_bucket" == https://* ]]; then
+    BUCKET=$(echo "$_raw_bucket" | sed -E 's|https://([^.]+)\..*|\1|')
+else
+    BUCKET="$_raw_bucket"
+fi
+
+echo "${LOG_PREFIX} Remote: ${REMOTE_NAME}, Bucket: ${BUCKET}"
+
+# Check if RCLONE_CONFIG_* vars are already set (from containerEnv)
+REMOTE_NAME_UPPER=$(echo "${REMOTE_NAME}" | tr '[:lower:]-' '[:upper:]_')
+TYPE_VAR="RCLONE_CONFIG_${REMOTE_NAME_UPPER}_TYPE"
+
+if [ -z "${!TYPE_VAR:-}" ]; then
+    # No config in containerEnv, set up fallback env vars
+    echo "${LOG_PREFIX} Setting up rclone config environment variables..."
+    export RCLONE_CONFIG_${REMOTE_NAME_UPPER}_TYPE="s3"
+    export RCLONE_CONFIG_${REMOTE_NAME_UPPER}_PROVIDER="Cloudflare"
+    export RCLONE_CONFIG_${REMOTE_NAME_UPPER}_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID}"
+    export RCLONE_CONFIG_${REMOTE_NAME_UPPER}_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY}"
+    export RCLONE_CONFIG_${REMOTE_NAME_UPPER}_ENDPOINT="${JUICEFS_S3_ENDPOINT}"
+    export RCLONE_CONFIG_${REMOTE_NAME_UPPER}_REGION="auto"
+    echo "${LOG_PREFIX} ✓ Configured rclone remote '${REMOTE_NAME}' via environment"
+else
+    echo "${LOG_PREFIX} ✓ Using existing rclone config from containerEnv"
+fi
+
+# Test connection
+echo "${LOG_PREFIX} Testing connection to ${REMOTE_NAME}:${BUCKET}..."
+if rclone lsd "${REMOTE_NAME}:${BUCKET}" --max-depth 1 &> /dev/null; then
+    echo "${LOG_PREFIX} ✓ Successfully connected to R2 bucket"
+else
+    echo "${LOG_PREFIX} ⚠ Warning: Could not list bucket contents (bucket may be empty or permissions issue)"
+fi
+
+echo "${LOG_PREFIX} rclone configuration complete"

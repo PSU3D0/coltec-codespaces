@@ -1,5 +1,5 @@
 import pytest
-import pytest
+import yaml
 from pathlib import Path
 from coltec_codespaces.provision import provision_workspace
 
@@ -188,3 +188,110 @@ def test_rollback_on_failure(sandbox, mock_run, mock_git_utils):
 
     workspace_path = sandbox / "codespaces/fail-org/env-fail"
     assert not workspace_path.exists()
+
+
+def test_provision_replicated_mode_default(sandbox, mock_run, mock_git_utils):
+    """
+    Verifies that new workspaces default to replicated mode with multi_scope_volumes.
+    """
+    provision_workspace(
+        repo_root=sandbox,
+        asset_input="dummy",
+        org_slug="test-org",
+        project_slug="test-proj",
+        environment_name="env-replicated",
+        project_type="python",
+    )
+
+    workspace_path = sandbox / "codespaces/test-org/env-replicated"
+    spec_path = workspace_path / ".devcontainer/workspace-spec.yaml"
+    assert spec_path.exists()
+
+    spec_data = yaml.safe_load(spec_path.read_text())
+
+    # Verify replicated mode
+    assert spec_data["persistence"]["mode"] == "replicated"
+    assert spec_data["persistence"]["enabled"] is True
+
+    # Verify multi_scope_volumes structure
+    volumes = spec_data["persistence"]["multi_scope_volumes"]
+    assert "global_refs" in volumes
+    assert "project_refs" in volumes
+    assert "environment" in volumes
+
+    # Verify environment volumes have correct structure
+    env_vols = volumes["environment"]
+    assert len(env_vols) >= 2
+    agent_context = next(v for v in env_vols if v["name"] == "agent-context")
+    assert agent_context["sync"] == "bidirectional"
+    assert agent_context["priority"] == 1
+    assert agent_context["mount_path"] == "/workspace/agent-context"
+
+    scratch = next(v for v in env_vols if v["name"] == "scratch")
+    assert scratch["sync"] == "push-only"
+    assert scratch["priority"] == 2
+
+    # Verify rclone_config exists
+    assert spec_data["persistence"]["rclone_config"]["remote_name"] == "r2coltec"
+
+
+def test_provision_mounted_mode_explicit(sandbox, mock_run, mock_git_utils):
+    """
+    Verifies that mounted mode can still be specified explicitly.
+    """
+    provision_workspace(
+        repo_root=sandbox,
+        asset_input="dummy",
+        org_slug="test-org",
+        project_slug="test-proj",
+        environment_name="env-mounted",
+        project_type="python",
+        persistence_mode="mounted",
+    )
+
+    workspace_path = sandbox / "codespaces/test-org/env-mounted"
+    spec_path = workspace_path / ".devcontainer/workspace-spec.yaml"
+    spec_data = yaml.safe_load(spec_path.read_text())
+
+    # Verify mounted mode
+    assert spec_data["persistence"]["mode"] == "mounted"
+    assert spec_data["persistence"]["enabled"] is True
+
+    # Verify mounts exist (legacy format)
+    mounts = spec_data["persistence"]["mounts"]
+    assert len(mounts) >= 2
+    mount_names = {m["name"] for m in mounts}
+    assert "agent-context" in mount_names
+    assert "scratch" in mount_names
+
+
+def test_provision_replicated_devcontainer_has_volume_mounts(sandbox, mock_run, mock_git_utils):
+    """
+    Verifies that devcontainer.json includes persistence volume mounts for replicated mode.
+    """
+    import json
+
+    provision_workspace(
+        repo_root=sandbox,
+        asset_input="dummy",
+        org_slug="test-org",
+        project_slug="test-proj",
+        environment_name="env-vols",
+        project_type="python",
+    )
+
+    workspace_path = sandbox / "codespaces/test-org/env-vols"
+    devcontainer_path = workspace_path / ".devcontainer/devcontainer.json"
+    devcontainer = json.loads(devcontainer_path.read_text())
+
+    # Verify mounts include persistence volumes
+    mounts = devcontainer.get("mounts", [])
+    mount_targets = [m.split(",")[1].split("=")[1] for m in mounts if "target=" in m]
+
+    assert "/workspace/agent-context" in mount_targets
+    assert "/workspace/scratch" in mount_targets
+
+    # Verify volume names follow naming convention
+    mount_sources = [m.split(",")[0].split("=")[1] for m in mounts if "source=" in m]
+    assert "e-env-vols-agent-context" in mount_sources
+    assert "e-env-vols-scratch" in mount_sources

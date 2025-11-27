@@ -28,10 +28,24 @@ from .spec import (
     VSCodeSettings,
 )
 
+
+def get_package_templates_dir() -> Path:
+    """
+    Get the path to templates bundled with this package.
+
+    Templates are stored in src/coltec_codespaces/templates/ and include
+    the workspace_scaffold files (scripts, configs, etc.).
+    """
+    return Path(__file__).parent / "templates"
+
+
 # Configuration Defaults
 DEFAULT_IMAGE = "ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net"
 WORKSPACE_FOLDER = "/workspace"
-DEFAULT_RUN_ARGS = ["--cap-add=SYS_PTRACE", "--security-opt=seccomp=unconfined"]
+DEFAULT_RUN_ARGS = [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt=seccomp=unconfined",
+]
 
 DEVCONTAINER_TEMPLATE_MAP = {
     "python": "python.json.jinja2",
@@ -146,6 +160,8 @@ def build_workspace_spec_data(
     project_type: str,
     org_slug: str,
     project_slug: str,
+    existing_spec: Optional[WorkspaceSpec] = None,
+    persistence_mode: str = "replicated",
 ) -> Dict[str, Any]:
     template_file = DEVCONTAINER_TEMPLATE_MAP.get(
         project_type, DEVCONTAINER_TEMPLATE_MAP["other"]
@@ -167,20 +183,101 @@ def build_workspace_spec_data(
         },
     ]
 
-    persistence_mounts = [
-        {
-            "name": "agent-context",
-            "target": "/workspace/agent-context",
-            "source": "agent-context",
-            "type": "symlink",
-        },
-        {
-            "name": "scratch",
-            "target": "/workspace/scratch",
-            "source": "scratch",
-            "type": "symlink",
-        },
-    ]
+    # Standard overlays for performance (avoid JuiceFS churn)
+    if project_type in ("node", "monorepo"):
+        mounts.append(
+            {
+                "source": f"{workspace_name}-node-modules",
+                "target": f"{WORKSPACE_FOLDER}/codebase/node_modules",
+                "type": "volume",
+            }
+        )
+
+    if project_type in ("rust", "monorepo"):
+        mounts.append(
+            {
+                "source": f"{workspace_name}-target",
+                "target": f"{WORKSPACE_FOLDER}/codebase/target",
+                "type": "volume",
+            }
+        )
+
+    if project_type in ("python", "monorepo"):
+        mounts.append(
+            {
+                "source": f"{workspace_name}-venv",
+                "target": f"{WORKSPACE_FOLDER}/codebase/.venv",
+                "type": "volume",
+            }
+        )
+
+    # Build persistence configuration based on mode
+    if persistence_mode == "replicated":
+        # V2 replicated mode with rclone
+        persistence_config = {
+            "enabled": True,
+            "mode": "replicated",
+            "scope": "project",
+            "mounts": [],  # Legacy field, empty for replicated mode
+            "rclone_config": {
+                "remote_name": "r2coltec",
+                "type": "s3",
+                "options": {
+                    "provider": "Cloudflare",
+                    "access_key_id": "${S3_ACCESS_KEY_ID}",
+                    "secret_access_key": "${S3_SECRET_ACCESS_KEY}",
+                    "endpoint": "${JUICEFS_S3_ENDPOINT}",
+                    "region": "auto",
+                },
+            },
+            "multi_scope_volumes": {
+                "global_refs": [],
+                "project_refs": [],
+                "environment": [
+                    {
+                        "name": "agent-context",
+                        "remote_path": "workspaces/{org}/{project}/{env}/agent-context",
+                        "mount_path": "/workspace/agent-context",
+                        "sync": "bidirectional",
+                        "interval": 60,
+                        "priority": 1,
+                        "exclude": [".git/**", "__pycache__/**", "*.pyc", "node_modules/**", ".venv/**"],
+                        "read_only": False,
+                    },
+                    {
+                        "name": "scratch",
+                        "remote_path": "workspaces/{org}/{project}/{env}/scratch",
+                        "mount_path": "/workspace/scratch",
+                        "sync": "push-only",
+                        "interval": 300,
+                        "priority": 2,
+                        "exclude": ["*.tmp", "*.log"],
+                        "read_only": False,
+                    },
+                ],
+            },
+        }
+    else:
+        # Legacy mounted mode (JuiceFS)
+        persistence_config = {
+            "enabled": True,
+            "mode": "mounted",
+            "scope": "project",
+            "mounts": [
+                {
+                    "name": "agent-context",
+                    "target": "/workspace/agent-context",
+                    "source": "agent-context",
+                    "type": "symlink",
+                },
+                {
+                    "name": "scratch",
+                    "target": "/workspace/scratch",
+                    "source": "scratch",
+                    "type": "symlink",
+                },
+            ],
+        }
 
     # We use isoformat with Z to indicate UTC
     now_str = (
@@ -217,11 +314,7 @@ def build_workspace_spec_data(
                 "settings": {"values": settings},
             },
         },
-        "persistence": {
-            "enabled": True,
-            "scope": "project",
-            "mounts": persistence_mounts,
-        },
+        "persistence": persistence_config,
         "networking": {
             "enabled": True,
             "hostname_prefix": "dev-",
@@ -229,6 +322,16 @@ def build_workspace_spec_data(
         },
         "generated_at": now_str,
     }
+
+    if existing_spec is not None:
+        try:
+            spec["persistence"] = existing_spec.persistence.model_dump(
+                mode="python", exclude_none=True
+            )
+        except Exception:
+            # Fall back to generated defaults if parsing fails
+            pass
+
     return spec
 
 
@@ -314,14 +417,16 @@ def provision_workspace(
     templates_dir: Optional[Path] = None,
     template_overlays: Optional[List[Path]] = None,
     manifest_path: Optional[Path] = None,
+    persistence_mode: str = "replicated",
 ) -> None:
     """
     Core logic to provision a new Coltec workspace.
     """
 
     # Resolve default templates and overlays
+    # Default to package-bundled templates, allow override via templates_dir
     if not templates_dir:
-        templates_dir = repo_root / "templates"
+        templates_dir = get_package_templates_dir()
 
     scaffold_roots: List[Path] = []
     base_scaffold = templates_dir / "workspace_scaffold"
@@ -403,6 +508,7 @@ def provision_workspace(
             project_type=project_type,
             org_slug=org_slug,
             project_slug=project_slug,
+            persistence_mode=persistence_mode,
         )
 
         # Use the Pydantic model to validate/dump
@@ -658,11 +764,32 @@ def update_workspace(
     project_type = env_entry["project_type"]
     asset_repo_url = env_entry["asset_repo_url"]
 
+    existing_spec = None
+    existing_spec_path = workspace_path / ".devcontainer" / "workspace-spec.yaml"
+    if existing_spec_path.exists():
+        try:
+            existing_spec_data = yaml.safe_load(
+                existing_spec_path.read_text(encoding="utf-8")
+            )
+            if existing_spec_data:
+                existing_spec = WorkspaceSpec.model_validate(existing_spec_data)
+        except Exception as e:
+            print(
+                f"[update] Warning: Failed to load existing workspace spec for {env_name}: {e}"
+            )
+
+    # Preserve existing persistence mode if spec exists
+    existing_persistence_mode = "replicated"  # Default for new workspaces
+    if existing_spec:
+        existing_persistence_mode = existing_spec.persistence.mode
+
     spec_data = build_workspace_spec_data(
         workspace_name=env_name,
         project_type=project_type,
         org_slug=org_slug,
         project_slug=project_slug,
+        existing_spec=existing_spec,
+        persistence_mode=existing_persistence_mode,
     )
 
     # Config/Features are on the PROJECT level, not environment level in schema?
@@ -688,8 +815,9 @@ def update_workspace(
     }
 
     # 2. Prepare Templates
+    # Default to package-bundled templates, allow override via templates_dir
     if not templates_dir:
-        templates_dir = repo_root / "templates"
+        templates_dir = get_package_templates_dir()
 
     scaffold_roots: List[Path] = []
     base_scaffold = templates_dir / "workspace_scaffold"
@@ -731,12 +859,20 @@ def update_workspace(
             changes.append(("MOD", rel_path, new_content, current_content))
 
     if not changes:
-        print("[update] No changes detected. Workspace is up to date.")
-        return False
+        print("[update] No changes detected in templates.")
+    else:
+        print(f"[update] Found {len(changes)} changes:")
+        for action, path, _, _ in changes:
+            print(f"  {action} {path}")
 
-    print(f"[update] Found {len(changes)} changes:")
-    for action, path, _, _ in changes:
-        print(f"  {action} {path}")
+    if not changes and not force:
+        # Check if we need to force update spec/json even if no template changes
+        # We can check drift for spec too, but let's just return if not forced
+        # BUT: The user wants to update the spec if the python code changed (defaults).
+        # So we should probably always check the spec drift below.
+        # Let's continue execution instead of returning early, but maybe warn/prompt if interactive.
+        # For now, let's continue to spec check.
+        pass
 
     if dry_run:
         # Emit simple unified diffs for modifications
@@ -757,7 +893,7 @@ def update_workspace(
         print("[update] Dry run complete. Pass --force to apply changes.")
         return True
 
-    if not force:
+    if not force and changes:
         print(
             "[update] Changes detected. Re-run with --force to apply modifications.",
             file=sys.stderr,
@@ -765,44 +901,40 @@ def update_workspace(
         return True
 
     # 4. Apply Changes
-    print("[update] Applying changes...")
-    for action, rel_path, content, _ in changes:
-        target_path = workspace_path / rel_path
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(content, encoding="utf-8")
-        if target_path.suffix in {".sh", ".bash"}:
-            target_path.chmod(target_path.stat().st_mode | 0o111)
-        print(f"  Applied {action} {rel_path}")
+    if changes:
+        print("[update] Applying changes...")
+        for action, rel_path, content, _ in changes:
+            target_path = workspace_path / rel_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(content, encoding="utf-8")
+            if target_path.suffix in {".sh", ".bash"}:
+                target_path.chmod(target_path.stat().st_mode | 0o111)
+            print(f"  Applied {action} {rel_path}")
 
-    # TODO: Should we regenerate devcontainer.json?
-    # Yes, because the spec might have changed if templates changed (e.g. spec template).
-    # But `workspace-spec.yaml` is generated from code logic, NOT Jinja templates (mostly).
-    # Actually, `workspace-spec.yaml` IS generated via python code `build_workspace_spec_data`, not a template file.
-    # If the python logic changed, we should regenerate it.
-    # Let's regenerate the spec and devcontainer.json as well to be safe.
+    # Always regenerate spec and devcontainer.json on update
+    if not dry_run:
+        try:
+            spec_model = WorkspaceSpec.model_validate(spec_data)
 
-    try:
-        spec_model = WorkspaceSpec.model_validate(spec_data)
+            # Check spec drift
+            spec_path = workspace_path / ".devcontainer/workspace-spec.yaml"
+            new_spec_yaml = yaml.safe_dump(spec_data, sort_keys=False)
 
-        # Check spec drift
-        spec_path = workspace_path / ".devcontainer/workspace-spec.yaml"
-        new_spec_yaml = yaml.safe_dump(spec_data, sort_keys=False)
+            if (
+                not spec_path.exists()
+                or spec_path.read_text(encoding="utf-8") != new_spec_yaml
+            ):
+                print("  MOD .devcontainer/workspace-spec.yaml")
+                spec_path.write_text(new_spec_yaml, encoding="utf-8")
 
-        if (
-            not spec_path.exists()
-            or spec_path.read_text(encoding="utf-8") != new_spec_yaml
-        ):
-            print("  MOD .devcontainer/workspace-spec.yaml")
-            spec_path.write_text(new_spec_yaml, encoding="utf-8")
+                # Regenerate devcontainer.json
+                devcontainer_json = spec_model.devcontainer_json()
+                (workspace_path / ".devcontainer/devcontainer.json").write_text(
+                    devcontainer_json, encoding="utf-8"
+                )
+                print("  MOD .devcontainer/devcontainer.json")
 
-            # Regenerate devcontainer.json
-            devcontainer_json = spec_model.devcontainer_json()
-            (workspace_path / ".devcontainer/devcontainer.json").write_text(
-                devcontainer_json, encoding="utf-8"
-            )
-            print("  MOD .devcontainer/devcontainer.json")
-
-    except Exception as e:
-        print(f"[update] Warning: Failed to regenerate spec: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"[update] Warning: Failed to regenerate spec: {e}", file=sys.stderr)
 
     return True

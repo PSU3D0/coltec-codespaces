@@ -10,15 +10,18 @@ LABEL org.opencontainers.image.licenses="MIT"
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TAILSCALE_VERSION=1.90.6
 ARG JUICEFS_VERSION=1.3.0
+ARG RCLONE_VERSION=1.65.0
 
 USER root
 
 COPY scripts/install-tailscale.sh /tmp/install-tailscale.sh
 COPY scripts/install-juicefs.sh /tmp/install-juicefs.sh
+COPY scripts/install-rclone.sh /tmp/install-rclone.sh
 
 RUN bash /tmp/install-tailscale.sh "${TAILSCALE_VERSION}" \
     && bash /tmp/install-juicefs.sh "${JUICEFS_VERSION}" \
-    && rm -f /tmp/install-tailscale.sh /tmp/install-juicefs.sh
+    && bash /tmp/install-rclone.sh "${RCLONE_VERSION}" \
+    && rm -f /tmp/install-tailscale.sh /tmp/install-juicefs.sh /tmp/install-rclone.sh
 
 USER vscode
 WORKDIR /workspace
