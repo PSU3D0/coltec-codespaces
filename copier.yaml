@@ -1,0 +1,42 @@
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+
+_tasks:
+  - "chmod +x .devcontainer/scripts/*.sh"
+
+org:
+  type: str
+  help: Organization slug (lowercase, hyphens)
+  validator: "{% if not org | regex_search('^[a-z0-9-]+$') %}Must match ^[a-z0-9-]+${% endif %}"
+
+project:
+  type: str
+  help: Project slug (lowercase, hyphens)
+  validator: "{% if not project | regex_search('^[a-z0-9-]+$') %}Must match ^[a-z0-9-]+${% endif %}"
+
+env:
+  type: str
+  help: Environment name (workspace name)
+  default: dev
+
+project_type:
+  type: str
+  help: Primary stack for this workspace
+  choices:
+    python: Python
+    node: Node.js
+    rust: Rust
+    monorepo: Monorepo (polyglot)
+    other: Other
+  default: python
+
+image:
+  type: str
+  help: Base devcontainer image (with tag)
+  default: ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net
+
+persistence_enabled:
+  type: bool
+  help: Enable replicated persistence (rclone)
+  default: true

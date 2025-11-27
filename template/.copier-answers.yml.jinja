@@ -1,0 +1,6 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+{% set answers = _copier_answers.copy() %}
+{% if not answers.get("_commit") %}
+{%   set _ = answers.update({"_commit": "HEAD"}) %}
+{% endif %}
+{{ answers | to_nice_yaml -}}

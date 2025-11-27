@@ -905,66 +905,29 @@ nexus/
 
 ## Phase 1: JSON Schema Validation
 
-> Update: derive the schema from Rust types (`schemars` + `serde_json`) inside the `coltec-daemon` crate. `ajv-cli` can remain as an optional external validator, but the authoritative schema/validation path lives in Rust (no Node dependency required for the core flow).
-
 ### Why
-Replace Pydantic models with language-agnostic JSON Schema.
+Replace Pydantic with a schema generated from the Rust types we’ll use in the daemon, keeping validation in Rust (Node/ajv optional).
 
 ### How
-1. Convert spec.py Pydantic models to JSON Schema
-2. Install ajv-cli for validation
-3. Create validation wrapper
+1. Define workspace-spec types in `coltec-daemon` using `serde` + `schemars`.
+2. Generate `coltec-daemon/schema/workspace-spec.schema.json` from those types (authoritative schema).
+3. Provide a Rust CLI validator (`coltec-validate`) that pretty-prints errors against the generated schema.
+4. Optional: keep `ajv-cli` as a secondary validator pointing at the generated schema.
 
 ### Where
 ```
-coltec-devcontainer-template/
-└── schema/
-    └── workspace-spec.schema.json
-```
-
-### JSON Schema (Key Sections)
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://coltec.dev/schemas/workspace-spec.json",
-  "title": "Workspace Specification",
-  "type": "object",
-  "required": ["name", "metadata"],
-  "properties": {
-    "name": {
-      "type": "string",
-      "pattern": "^[a-z0-9-]+$"
-    },
-    "metadata": { "$ref": "#/$defs/metadata" },
-    "persistence": { "$ref": "#/$defs/persistence" },
-    "networking": { "$ref": "#/$defs/networking" }
-  },
-  "$defs": {
-    "sync_path": {
-      "type": "object",
-      "required": ["name", "path", "remote_path"],
-      "properties": {
-        "name": { "type": "string" },
-        "path": { "type": "string", "pattern": "^/" },
-        "remote_path": { "type": "string" },
-        "direction": {
-          "enum": ["bidirectional", "pull-only", "push-only"],
-          "default": "bidirectional"
-        },
-        "interval": { "type": "integer", "minimum": 30, "default": 300 },
-        "priority": { "type": "integer", "minimum": 1, "maximum": 3 },
-        "exclude": { "type": "array", "items": { "type": "string" } }
-      }
-    }
-  }
-}
+coltec-daemon/
+├── src/lib.rs                 # types + schemars
+├── src/bin/validate.rs        # validator CLI
+├── schema/workspace-spec.schema.json  # generated
+└── tests/data/*.yaml          # fixtures
 ```
 
 ### Definition of Done
-- [ ] JSON Schema covers all workspace-spec.yaml fields
-- [ ] ajv validates all existing workspaces
-- [ ] Invalid configs rejected with helpful errors
+- [ ] Rust types cover all workspace-spec.yaml fields
+- [ ] Generated schema produced from Rust types
+- [ ] `coltec-validate --file <spec>` passes on real workspaces and fails with helpful errors on bad specs
+- [ ] (Optional) `ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d <spec>` works
 
 ### Test-Driven Completion Criteria
 ```bash

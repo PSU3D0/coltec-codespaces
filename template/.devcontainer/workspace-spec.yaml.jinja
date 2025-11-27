@@ -1,0 +1,140 @@
+name: {{ env }}
+version: 1.0.0
+metadata:
+  org: {{ org }}
+  project: {{ project }}
+  environment: {{ env }}
+  description: Coltec workspace for {{ project }}
+  tags:
+    - {{ project_type }}
+    - {{ org }}
+    - {{ project }}
+devcontainer:
+  template:
+    name: {{ project_type }}
+    path: devcontainer_templates/devcontainer.json.jinja2
+  image:
+    name: {{ image | default("ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net") }}
+  user: vscode
+  workspace_folder: /workspace
+  workspace_mount: source=${localWorkspaceFolder},target=/workspace,type=bind
+  run_args:
+    - --cap-add=SYS_PTRACE
+    - --security-opt=seccomp=unconfined
+  mounts:
+    - source: {{ env }}-home
+      target: /home/vscode
+      type: volume
+    - source: {{ env }}-tool-cache
+      target: /home/vscode/.cache
+      type: volume
+    {%- if project_type in ["python", "monorepo"] %}
+    - source: {{ env }}-venv
+      target: /workspace/codebase/.venv
+      type: volume
+    {%- endif %}
+    {%- if project_type in ["node", "monorepo"] %}
+    - source: {{ env }}-node-modules
+      target: /workspace/codebase/node_modules
+      type: volume
+    {%- endif %}
+    {%- if project_type in ["rust", "monorepo"] %}
+    - source: {{ env }}-target
+      target: /workspace/codebase/target
+      type: volume
+    {%- endif %}
+  lifecycle:
+    post_create:
+      - ./.devcontainer/scripts/post-create.sh
+    post_start:
+      - ./.devcontainer/scripts/post-start.sh
+  customizations:
+    extensions:
+      recommended:
+        - ms-azuretools.vscode-docker
+        - ms-vscode.makefile-tools
+        - ms-vscode.remote-explorer
+        - fill-labs.dependi
+        {%- if project_type == "python" %}
+        - ms-python.python
+        {%- elif project_type == "node" %}
+        - dbaeumer.vscode-eslint
+        - esbenp.prettier-vscode
+        {%- elif project_type == "rust" %}
+        - rust-lang.rust-analyzer
+        - tamasfe.even-better-toml
+        {%- elif project_type == "monorepo" %}
+        - ms-python.python
+        - dbaeumer.vscode-eslint
+        - esbenp.prettier-vscode
+        - rust-lang.rust-analyzer
+        - tamasfe.even-better-toml
+        {%- endif %}
+    settings:
+      values:
+        terminal.integrated.defaultProfile.linux: tmux
+        terminal.integrated.profiles.linux:
+          zsh:
+            path: /usr/bin/zsh
+          resumable-tmux:
+            path: /usr/bin/tmux
+            args:
+              - new-session
+              - -A
+              - -s
+              - devcontainer
+        terminal.integrated.cwd: /workspace
+        terminal.integrated.localEchoEnabled: "on"
+        files.trimTrailingWhitespace: true
+        editor.formatOnSave: true
+        python.analysis.typeCheckingMode: strict
+        rust-analyzer.cargo.allFeatures: true
+        rust-analyzer.check.command: clippy
+        git.openRepositoryInParentFolders: always
+persistence:
+  enabled: {{ "true" if persistence_enabled else "false" }}
+  mode: replicated
+  scope: project
+  mounts: []
+  rclone_config:
+    remote_name: r2coltec
+    type: s3
+    options:
+      provider: Cloudflare
+      access_key_id: ${S3_ACCESS_KEY_ID}
+      secret_access_key: ${S3_SECRET_ACCESS_KEY}
+      endpoint: ${JUICEFS_S3_ENDPOINT}
+      region: auto
+  multi_scope_volumes:
+    global_refs: []
+    project_refs: []
+    environment:
+      - name: agent-context
+        remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/agent-context
+        mount_path: /workspace/agent-context
+        sync: bidirectional
+        interval: 60
+        priority: 1
+        exclude:
+          - .git/**
+          - __pycache__/**
+          - "*.pyc"
+          - node_modules/**
+          - .venv/**
+        read_only: false
+      - name: scratch
+        remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/scratch
+        mount_path: /workspace/scratch
+        sync: push-only
+        interval: 300
+        priority: 2
+        exclude:
+          - "*.tmp"
+          - "*.log"
+        read_only: false
+networking:
+  enabled: true
+  hostname_prefix: dev-
+  tags:
+    - tag:devcontainer
+generated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime }}"
