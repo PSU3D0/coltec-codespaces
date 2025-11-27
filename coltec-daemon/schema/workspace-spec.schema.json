@@ -1,0 +1,526 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coltec.dev/schemas/workspace-spec.json",
+  "title": "Coltec Workspace Specification",
+  "type": "object",
+  "required": [
+    "name",
+    "metadata",
+    "devcontainer"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/WorkspaceMetadata"
+    },
+    "devcontainer": {
+      "$ref": "#/$defs/DevcontainerSpec"
+    },
+    "mounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MountSpec"
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SecretMount"
+      }
+    },
+    "networking": {
+      "$ref": "#/$defs/NetworkingSpec"
+    },
+    "persistence": {
+      "$ref": "#/$defs/PersistenceSpec"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "DevcontainerSpec": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/$defs/TemplateRef"
+        },
+        "image": {
+          "$ref": "#/$defs/ImageRef"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FeatureRef"
+          }
+        },
+        "user": {
+          "type": "string"
+        },
+        "workspace_folder": {
+          "type": "string",
+          "default": "/workspace"
+        },
+        "workspace_mount": {
+          "type": "string",
+          "nullable": true
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MountSpec"
+          }
+        },
+        "run_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/LifecycleHooks"
+        },
+        "customizations": {
+          "$ref": "#/$defs/VSCodeCustomization"
+        }
+      },
+      "required": [
+        "template",
+        "image"
+      ],
+      "additionalProperties": false
+    },
+    "FeatureRef": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "options": true
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "ImageRef": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "LifecycleHooks": {
+      "type": "object",
+      "properties": {
+        "post_create": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "post_start": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "MountSpec": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "bind",
+            "volume",
+            "tmpfs",
+            "symlink"
+          ],
+          "default": "volume"
+        },
+        "extra": {
+          "type": "string",
+          "nullable": true
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "MultiScopeVolumes": {
+      "type": "object",
+      "properties": {
+        "global_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "project_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RcloneVolumeConfig"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "NetworkingSpec": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "hostname_prefix": {
+          "type": "string",
+          "default": "dev-"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PersistenceMount": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "default": "symlink"
+        }
+      },
+      "required": [
+        "name",
+        "target",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "PersistenceScope": {
+      "type": "string",
+      "enum": [
+        "project",
+        "environment"
+      ]
+    },
+    "PersistenceSpec": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "mode": {
+          "$ref": "#/$defs/PersistenceMode"
+        },
+        "scope": {
+          "$ref": "#/$defs/PersistenceScope"
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PersistenceMount"
+          }
+        },
+        "rclone_config": {
+          "$ref": "#/$defs/RcloneConfig"
+        },
+        "sync": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SyncPath"
+          }
+        },
+        "multi_scope_volumes": {
+          "$ref": "#/$defs/MultiScopeVolumes"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PersistenceMode": {
+      "type": "string",
+      "enum": [
+        "mounted",
+        "replicated"
+      ],
+      "default": "mounted"
+    },
+    "RcloneConfig": {
+      "type": "object",
+      "properties": {
+        "remote_name": {
+          "type": "string",
+          "default": "r2coltec"
+        },
+        "type": {
+          "type": "string",
+          "default": "s3"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RcloneVolumeConfig": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "mount_path": {
+          "type": "string"
+        },
+        "sync": {
+          "$ref": "#/$defs/SyncDirection"
+        },
+        "interval": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 300
+        },
+        "priority": {
+          "type": "integer",
+          "format": "uint8",
+          "default": 2
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "read_only": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "name",
+        "remote_path",
+        "mount_path"
+      ],
+      "additionalProperties": false
+    },
+    "SecretMount": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "mount_path": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "provider",
+        "key",
+        "mount_path"
+      ],
+      "additionalProperties": false
+    },
+    "SyncDirection": {
+      "type": "string",
+      "enum": [
+        "bidirectional",
+        "pull-only",
+        "push-only"
+      ],
+      "default": "bidirectional"
+    },
+    "SyncPath": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "direction": {
+          "$ref": "#/$defs/SyncDirection"
+        },
+        "interval": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 300
+        },
+        "priority": {
+          "type": "integer",
+          "format": "uint8",
+          "default": 2
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "remote_path"
+      ],
+      "additionalProperties": false
+    },
+    "TemplateRef": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "VSCodeCustomization": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "$ref": "#/$defs/VSCodeExtensions"
+        },
+        "settings": {
+          "$ref": "#/$defs/VSCodeSettings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "VSCodeExtensions": {
+      "type": "object",
+      "properties": {
+        "recommended": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "optional": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "VSCodeSettings": {
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkspaceMetadata": {
+      "type": "object",
+      "properties": {
+        "org": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string",
+          "default": "dev"
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "org",
+        "project"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

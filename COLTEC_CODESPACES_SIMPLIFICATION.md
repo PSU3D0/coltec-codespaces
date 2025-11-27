@@ -905,6 +905,8 @@ nexus/
 
 ## Phase 1: JSON Schema Validation
 
+> Update: derive the schema from Rust types (`schemars` + `serde_json`) inside the `coltec-daemon` crate. `ajv-cli` can remain as an optional external validator, but the authoritative schema/validation path lives in Rust (no Node dependency required for the core flow).
+
 ### Why
 Replace Pydantic models with language-agnostic JSON Schema.
 
@@ -967,11 +969,11 @@ coltec-devcontainer-template/
 ### Test-Driven Completion Criteria
 ```bash
 # Valid config passes
-ajv validate -s schema/workspace-spec.schema.json -d fixtures/valid.yaml
+ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d coltec-daemon/tests/data/valid_workspace.yaml
 # Exit 0
 
 # Invalid config fails with helpful message
-ajv validate -s schema/workspace-spec.schema.json -d fixtures/invalid.yaml
+ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d coltec-daemon/tests/data/invalid_workspace.yaml
 # Exit 1, mentions specific field
 ```
 
