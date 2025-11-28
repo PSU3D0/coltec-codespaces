@@ -1,0 +1,22 @@
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+
+# Inherit from base template
+_inherit: ../..
+
+_tasks:
+  - "chmod +x .devcontainer/scripts/*.sh"
+  - "mkdir -p codebase agent-context scratch"
+
+# Override image default for coltec infrastructure
+image:
+  type: str
+  help: Base devcontainer image (with tag)
+  default: ghcr.io/psu3d0/coltec-codespace:main-base-dind-net
+
+# Override persistence default - always enabled for coltec
+persistence_enabled:
+  type: bool
+  help: Enable replicated persistence (rclone)
+  default: true

@@ -1,0 +1,19 @@
+# Invalid: sync interval < 10 seconds
+name: bad-workspace
+metadata:
+  org: test
+  project: test
+devcontainer:
+  template:
+    name: python
+    path: templates/python.json
+  image:
+    name: ghcr.io/foo/bar
+persistence:
+  enabled: true
+  mode: replicated
+  sync:
+    - name: too-fast
+      path: /workspace
+      remote_path: foo/bar
+      interval: 5  # ERROR: minimum is 10 seconds

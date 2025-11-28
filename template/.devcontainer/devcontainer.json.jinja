@@ -1,58 +1,45 @@
 {
-  "name": "{{ project_type }}",
+  "name": "{{ env }}",
   "image": "{{ image }}",
   "remoteUser": "vscode",
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "mounts": [],
+  "mounts": [
+    "source={{ env }}-home,target=/home/vscode,type=volume",
+    "source={{ env }}-cache,target=/home/vscode/.cache,type=volume"
+  ],
   "runArgs": [
     "--cap-add=SYS_PTRACE",
     "--security-opt=seccomp=unconfined"
   ],
+  "containerEnv": {
+    "WORKSPACE_NAME": "{{ env }}",
+    "WORKSPACE_ORG": "{{ org }}",
+    "WORKSPACE_PROJECT": "{{ project }}",
+    "WORKSPACE_ENV": "{{ env }}"
+  },
   "postCreateCommand": ".devcontainer/scripts/post-create.sh",
   "postStartCommand": ".devcontainer/scripts/post-start.sh",
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-azuretools.vscode-docker",
-        "ms-vscode.makefile-tools",
-        "ms-vscode.remote-explorer",
-        "fill-labs.dependi"{% if project_type == "python" %},
-        "ms-python.python"{% elif project_type == "node" %},
+        "ms-vscode.remote-explorer"{% if project_type == "Python" %},
+        "ms-python.python"{% elif project_type == "Node.js" %},
         "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode"{% elif project_type == "rust" %},
+        "esbenp.prettier-vscode"{% elif project_type == "Rust" %},
         "rust-lang.rust-analyzer",
-        "tamasfe.even-better-toml"{% elif project_type == "monorepo" %},
+        "tamasfe.even-better-toml"{% elif project_type == "Monorepo (polyglot)" %},
         "ms-python.python",
         "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml"{% endif %}
       ],
       "settings": {
-        "terminal.integrated.defaultProfile.linux": "tmux",
-        "terminal.integrated.profiles.linux": {
-          "zsh": {
-            "path": "/usr/bin/zsh"
-          },
-          "resumable-tmux": {
-            "path": "/usr/bin/tmux",
-            "args": [
-              "new-session",
-              "-A",
-              "-s",
-              "devcontainer"
-            ]
-          }
-        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
         "terminal.integrated.cwd": "/workspace",
-        "terminal.integrated.localEchoEnabled": "on",
         "files.trimTrailingWhitespace": true,
-        "editor.formatOnSave": true,
-        "python.analysis.typeCheckingMode": "strict",
-        "rust-analyzer.cargo.allFeatures": true,
-        "rust-analyzer.check.command": "clippy",
-        "git.openRepositoryInParentFolders": "always"
+        "editor.formatOnSave": true
       }
     }
   }

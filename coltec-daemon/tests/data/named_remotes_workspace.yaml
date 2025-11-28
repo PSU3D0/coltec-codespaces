@@ -1,0 +1,57 @@
+name: named-remotes-test
+version: 1.0.0
+metadata:
+  org: test-org
+  project: test-proj
+  environment: dev
+  description: Test workspace with named remotes
+devcontainer:
+  image:
+    name: ghcr.io/test/image
+  user: vscode
+  workspace_folder: /workspace
+persistence:
+  enabled: true
+  mode: replicated
+  default_remote: primary
+  defaults:
+    transfers: 8
+    checkers: 16
+    bwlimit: "50M"
+  remotes:
+    primary:
+      type: s3
+      bucket: coltec-dev
+      path_prefix: workspaces
+      options:
+        provider: Cloudflare
+        endpoint: https://xxx.r2.cloudflarestorage.com
+        region: auto
+    logs-bucket:
+      type: s3
+      bucket: coltec-logs
+      options:
+        provider: Cloudflare
+        endpoint: https://xxx.r2.cloudflarestorage.com
+  sync:
+    - name: workspace
+      path: /workspace
+      remote_path: "{org}/{project}/{env}/code"
+      direction: bidirectional
+      interval: 60
+      priority: 1
+      exclude:
+        - .git/**
+        - node_modules/**
+        - .venv/**
+    - name: logs
+      path: /var/log/app
+      remote_path: "{org}/{project}/{env}/logs"
+      remote: logs-bucket
+      direction: push-only
+      interval: 300
+      priority: 2
+      transfers: 4
+      bwlimit: "10M"
+networking:
+  enabled: false

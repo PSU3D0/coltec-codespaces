@@ -1,1 +1,0 @@
-"""Coltec Codespaces tooling package."""

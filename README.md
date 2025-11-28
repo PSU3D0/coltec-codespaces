@@ -8,7 +8,7 @@ This repository owns **all** Coltec devcontainer tooling: Dockerfiles, devcontai
 | --- | --- |
 | `docker/` | Dockerfiles + smoke tests for every base SKU (see below) and shared install helpers under `docker/scripts/`. |
 | `devcontainer_templates/` | Jinja templates referenced by workspace specs (`template.path`). |
-| `src/coltec_codespaces/` | Pydantic workspace spec models and CLI entry point (`coltec-codespaces`). |
+| `coltec-daemon/` | Rust sync daemon for workspace persistence (`coltec-daemon`). |
 | `scripts/` | Local helper scripts for building/testing images (`build-all.sh`, `test-image.sh`). |
 | `specs/examples/` | Example workspace specs used for validation/tests. |
 | `.github/workflows/` | CI for building/testing (`build-base.yml`) and releasing (`release.yml`). |
@@ -21,16 +21,16 @@ All workspaces consume one of four GHCR tags: `ghcr.io/psu3d0/coltec-codespace:<
 | --- | --- | --- | --- |
 | `base` | `docker/base/Dockerfile` | `ubuntu:22.04` | mise (v2025.11.4), git, zsh, tmux, sudo, base tooling + `vscode` user |
 | `base-dind` | `docker/base-dind/Dockerfile` | `base` | Docker CE CLI/daemon, buildx, compose |
-| `base-net` | `docker/base-net/Dockerfile` | `base` | Tailscale (v1.90.6), JuiceFS (v1.3.0) |
-| `base-dind-net` | `docker/base-dind-net/Dockerfile` | `base-dind` | Tailscale + JuiceFS |
+| `base-net` | `docker/base-net/Dockerfile` | `base` | Tailscale (v1.90.6), rclone (v1.65.0) |
+| `base-dind-net` | `docker/base-dind-net/Dockerfile` | `base-dind` | Tailscale + rclone |
 
 Guidance:
 - **Most workspaces** → `base`
 - **Needs Docker builds only** → `base-dind`
-- **Needs Tailscale tailnet + JuiceFS** → `base-net`
+- **Needs Tailscale tailnet + rclone sync** → `base-net`
 - **Needs everything** → `base-dind-net`
 
-JuiceFS only ships in the network-aware SKUs (`base-net`, `base-dind-net`) so we can keep the default `base` as small as possible while still supporting host and in-container mounting strategies.
+The network-aware SKUs (`base-net`, `base-dind-net`) include Tailscale for private networking and rclone for cloud storage sync.
 
 ## Building & Testing Locally
 ```bash
@@ -41,21 +41,21 @@ JuiceFS only ships in the network-aware SKUs (`base-net`, `base-dind-net`) so we
 COLTEC_TEST_LOCAL=1 ./scripts/test-image.sh base-dind [version]
 ```
 
-## Workspace Spec CLI
-The `coltec-codespaces` CLI renders workspace specs into devcontainer JSON:
+## Sync Daemon
+The `coltec-daemon` (in `coltec-daemon/`) syncs workspace data to cloud storage via rclone:
 
 ```bash
-# Render to stdout (JSON) using uv
-uv run --project . coltec-codespaces render specs/examples/formualizer-dev.yaml
+# Validate a workspace spec
+cargo run --bin coltec-validate -- --file .devcontainer/workspace-spec.yaml
 
-# Validate a spec
-uv run --project . coltec-codespaces validate specs/examples/formualizer-dev.yaml
+# Run sync daemon (dry-run, single pass)
+COLTEC_CONFIG=.devcontainer/workspace-spec.yaml cargo run --bin coltec-daemon -- --dry-run --once
 
-# List workspaces in a bundle spec
-uv run --project . coltec-codespaces list specs/examples/*.yaml
+# Run continuous sync
+COLTEC_CONFIG=.devcontainer/workspace-spec.yaml cargo run --bin coltec-daemon
 ```
 
-Control-plane scaffolding scripts shell out to this CLI to validate and render `.devcontainer/workspace-spec.yaml` for every workspace (see hADR-0007).
+See `coltec-daemon/README.md` for full documentation.
 
 ## GitHub Actions
 - **build-base.yml** – Runs on pushes/PRs to `main` that touch `docker/**` or supporting tooling. Sequentially builds all four SKUs (pushing only on non-PR events), tags them as `sha-<commit>-<sku>`, and runs the matching smoke test script for each.

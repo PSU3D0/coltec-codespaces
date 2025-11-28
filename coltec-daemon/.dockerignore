@@ -1,0 +1,24 @@
+# Build artifacts
+target/
+*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed in image)
+*.md
+!README.md
+
+# Test data (not needed in runtime image)
+tests/
+
+# Local development
+.env
+.env.*

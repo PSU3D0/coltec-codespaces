@@ -1,0 +1,134 @@
+name: {{ env }}
+version: 1.0.0
+metadata:
+  org: {{ org }}
+  project: {{ project }}
+  environment: {{ env }}
+  description: Coltec venture workspace for {{ org }}/{{ project }}
+  tags:
+    - {{ project_type }}
+    - coltec-venture
+    - {{ org }}
+devcontainer:
+  image:
+    name: {{ image }}
+  user: vscode
+  workspace_folder: /workspace
+  workspace_mount: source=${localWorkspaceFolder},target=/workspace,type=bind
+  run_args:
+    - --cap-add=SYS_PTRACE
+    - --security-opt=seccomp=unconfined
+    - --privileged
+  mounts:
+    - source: {{ env }}-home
+      target: /home/vscode
+      type: volume
+    - source: {{ env }}-cache
+      target: /home/vscode/.cache
+      type: volume
+    {%- if project_type in ["Python", "Monorepo (polyglot)"] %}
+    - source: {{ env }}-venv
+      target: /workspace/codebase/.venv
+      type: volume
+    {%- endif %}
+    {%- if project_type in ["Node.js", "Monorepo (polyglot)"] %}
+    - source: {{ env }}-node-modules
+      target: /workspace/codebase/node_modules
+      type: volume
+    {%- endif %}
+    {%- if project_type in ["Rust", "Monorepo (polyglot)"] %}
+    - source: {{ env }}-target
+      target: /workspace/codebase/target
+      type: volume
+    {%- endif %}
+  lifecycle:
+    post_create:
+      - ./.devcontainer/scripts/post-create.sh
+    post_start:
+      - ./.devcontainer/scripts/post-start.sh
+  customizations:
+    extensions:
+      recommended:
+        - ms-azuretools.vscode-docker
+        - ms-vscode.makefile-tools
+        - ms-vscode.remote-explorer
+        - fill-labs.dependi
+        {%- if project_type == "Python" %}
+        - ms-python.python
+        {%- elif project_type == "Node.js" %}
+        - dbaeumer.vscode-eslint
+        - esbenp.prettier-vscode
+        {%- elif project_type == "Rust" %}
+        - rust-lang.rust-analyzer
+        - tamasfe.even-better-toml
+        {%- elif project_type == "Monorepo (polyglot)" %}
+        - ms-python.python
+        - dbaeumer.vscode-eslint
+        - esbenp.prettier-vscode
+        - rust-lang.rust-analyzer
+        - tamasfe.even-better-toml
+        {%- endif %}
+    settings:
+      values:
+        terminal.integrated.defaultProfile.linux: tmux
+        terminal.integrated.profiles.linux:
+          zsh:
+            path: /usr/bin/zsh
+          resumable-tmux:
+            path: /usr/bin/tmux
+            args:
+              - new-session
+              - -A
+              - -s
+              - devcontainer
+        terminal.integrated.cwd: /workspace
+        terminal.integrated.localEchoEnabled: "on"
+        files.trimTrailingWhitespace: true
+        editor.formatOnSave: true
+        python.analysis.typeCheckingMode: strict
+        rust-analyzer.cargo.allFeatures: true
+        rust-analyzer.check.command: clippy
+        git.openRepositoryInParentFolders: always
+persistence:
+  enabled: true
+  mode: replicated
+  scope: project
+  rclone_config:
+    remote_name: r2coltec
+    type: s3
+    options:
+      provider: Cloudflare
+      access_key_id: ${RCLONE_S3_ACCESS_KEY_ID}
+      secret_access_key: ${RCLONE_S3_SECRET_ACCESS_KEY}
+      endpoint: ${RCLONE_S3_ENDPOINT}
+      region: auto
+  sync:
+    - name: agent-context
+      path: /workspace/agent-context
+      remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/agent-context
+      direction: bidirectional
+      interval: 60
+      priority: 1
+      exclude:
+        - .git/**
+        - __pycache__/**
+        - "*.pyc"
+        - node_modules/**
+        - .venv/**
+        - target/**
+    - name: scratch
+      path: /workspace/scratch
+      remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/scratch
+      direction: push-only
+      interval: 300
+      priority: 2
+      exclude:
+        - "*.tmp"
+        - "*.log"
+networking:
+  enabled: true
+  hostname_prefix: dev-
+  tags:
+    - tag:devcontainer
+    - tag:coltec
+generated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime }}"

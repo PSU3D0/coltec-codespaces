@@ -1,0 +1,23 @@
+# Invalid: duplicate sync path name
+name: bad-workspace
+metadata:
+  org: test
+  project: test
+devcontainer:
+  template:
+    name: python
+    path: templates/python.json
+  image:
+    name: ghcr.io/foo/bar
+persistence:
+  enabled: true
+  mode: replicated
+  sync:
+    - name: data
+      path: /workspace/data
+      remote_path: foo/data
+      interval: 60
+    - name: data  # ERROR: duplicate name
+      path: /workspace/other
+      remote_path: foo/other
+      interval: 60

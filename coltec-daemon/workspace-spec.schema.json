@@ -54,7 +54,6 @@
         "mode": "mounted",
         "mounts": [],
         "multi_scope_volumes": null,
-        "rclone_config": null,
         "remotes": {},
         "scope": "project",
         "sync": []
@@ -470,18 +469,6 @@
             }
           ]
         },
-        "rclone_config": {
-          "description": "Legacy: single rclone config. Use `remotes` for new configs.",
-          "default": null,
-          "anyOf": [
-            {
-              "$ref": "#/definitions/RcloneConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "remotes": {
           "description": "Named remote configurations. Keys are remote names referenced by sync paths.",
           "default": {},
@@ -504,27 +491,6 @@
           "items": {
             "$ref": "#/definitions/SyncPath"
           }
-        }
-      },
-      "additionalProperties": false
-    },
-    "RcloneConfig": {
-      "type": "object",
-      "properties": {
-        "options": {
-          "default": {},
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "remote_name": {
-          "default": "r2coltec",
-          "type": "string"
-        },
-        "type": {
-          "default": "s3",
-          "type": "string"
         }
       },
       "additionalProperties": false

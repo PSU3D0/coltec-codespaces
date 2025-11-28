@@ -3,6 +3,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod config;
+pub mod plan;
+pub mod sync;
+
+pub use config::{load_and_validate, ConfigError};
+pub use plan::{build_plan, OperationSettings, PlanContext, ResolvedRemote, SyncAction, SyncPlan};
+pub use sync::{execute_plan, execute_sync, PlanResult, SyncResult};
 pub use schemars::schema_for;
 
 pub fn workspace_schema() -> schemars::schema::RootSchema {
@@ -52,26 +59,108 @@ fn default_persistence_mount_type() -> String {
     "symlink".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RcloneConfig {
-    #[serde(default = "default_remote_name")]
-    pub remote_name: String,
-    #[serde(default = "default_remote_type")]
-    pub r#type: String,
-    #[serde(default)]
-    pub options: std::collections::BTreeMap<String, String>,
-}
-
-fn default_remote_name() -> String {
-    "r2coltec".to_string()
-}
-
 fn default_remote_type() -> String {
     "s3".to_string()
 }
 
+// =============================================================================
+// Named Remote Configuration
+// =============================================================================
+
+/// Filename encryption mode for rclone crypt remotes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FilenameEncryption {
+    /// Full filename encryption (max ~143 characters)
+    Standard,
+    /// Lightweight rotation-based obfuscation (longer names allowed)
+    Obfuscate,
+    /// Names remain visible; only ".bin" extensions are added
+    Off,
+}
+
+impl Default for FilenameEncryption {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+/// Encryption configuration for rclone crypt remotes.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CryptConfig {
+    /// Environment variable containing the encryption password
+    pub password_env: String,
+    /// Environment variable containing the salt (optional but recommended)
+    #[serde(default)]
+    pub password2_env: Option<String>,
+    /// Filename encryption mode
+    #[serde(default)]
+    pub filename_encryption: FilenameEncryption,
+    /// Whether to encrypt directory names
+    #[serde(default = "default_true")]
+    pub directory_name_encryption: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Named remote configuration for rclone backends.
+///
+/// Supports both direct backends (s3, gcs, etc.) and wrapper backends (crypt).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteConfig {
+    /// Backend type: "s3", "gcs", "crypt", etc.
+    #[serde(default = "default_remote_type")]
+    pub r#type: String,
+
+    /// Bucket name (required for s3/gcs, not for crypt)
+    #[serde(default)]
+    pub bucket: Option<String>,
+
+    /// Path prefix prepended to all remote_paths using this remote
+    #[serde(default)]
+    pub path_prefix: Option<String>,
+
+    /// Backend-specific options (provider, endpoint, region, etc.)
+    /// These map directly to rclone config options.
+    #[serde(default)]
+    pub options: std::collections::BTreeMap<String, String>,
+
+    // --- Crypt-specific fields (only when type = "crypt") ---
+    /// Base remote to wrap (required for crypt)
+    #[serde(default)]
+    pub wrap_remote: Option<String>,
+
+    /// Path within the wrapped remote
+    #[serde(default)]
+    pub wrap_path: Option<String>,
+
+    /// Encryption configuration (required for crypt)
+    #[serde(default)]
+    pub crypt: Option<CryptConfig>,
+}
+
+/// Default operation settings for sync paths.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SyncDefaults {
+    /// Number of parallel file transfers (rclone --transfers)
+    #[serde(default)]
+    pub transfers: Option<u32>,
+
+    /// Number of parallel checkers (rclone --checkers)
+    #[serde(default)]
+    pub checkers: Option<u32>,
+
+    /// Bandwidth limit (e.g., "10M", "1G") (rclone --bwlimit)
+    #[serde(default)]
+    pub bwlimit: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncDirection {
     #[serde(alias = "bidirectional")]
@@ -91,9 +180,15 @@ impl Default for SyncDirection {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SyncPath {
+    /// Unique name for this sync path
     pub name: String,
+    /// Local filesystem path to sync
     pub path: String,
+    /// Remote path (supports {org}, {project}, {env} placeholders)
     pub remote_path: String,
+    /// Override the default remote for this sync path
+    #[serde(default)]
+    pub remote: Option<String>,
     #[serde(default)]
     pub direction: SyncDirection,
     #[serde(default = "default_sync_interval")]
@@ -102,6 +197,17 @@ pub struct SyncPath {
     pub priority: u8,
     #[serde(default)]
     pub exclude: Vec<String>,
+
+    // --- Operation overrides (optional, inherit from defaults) ---
+    /// Override parallel file transfers for this path
+    #[serde(default)]
+    pub transfers: Option<u32>,
+    /// Override parallel checkers for this path
+    #[serde(default)]
+    pub checkers: Option<u32>,
+    /// Override bandwidth limit for this path (e.g., "5M")
+    #[serde(default)]
+    pub bwlimit: Option<String>,
 }
 
 fn default_sync_interval() -> u64 {
@@ -178,8 +284,20 @@ pub struct PersistenceSpec {
     pub scope: PersistenceScope,
     #[serde(default)]
     pub mounts: Vec<PersistenceMount>,
+
+    /// Named remote configurations. Keys are remote names referenced by sync paths.
     #[serde(default)]
-    pub rclone_config: Option<RcloneConfig>,
+    pub remotes: std::collections::BTreeMap<String, RemoteConfig>,
+
+    /// Default remote name used when sync paths don't specify one.
+    /// Must reference a key in `remotes`.
+    #[serde(default)]
+    pub default_remote: Option<String>,
+
+    /// Default operation settings inherited by sync paths.
+    #[serde(default)]
+    pub defaults: Option<SyncDefaults>,
+
     #[serde(default)]
     pub sync: Vec<SyncPath>,
     #[serde(default)]
@@ -193,7 +311,9 @@ impl Default for PersistenceSpec {
             mode: PersistenceMode::default(),
             scope: PersistenceScope::default(),
             mounts: Vec::new(),
-            rclone_config: None,
+            remotes: std::collections::BTreeMap::new(),
+            default_remote: None,
+            defaults: None,
             sync: Vec::new(),
             multi_scope_volumes: None,
         }
@@ -337,7 +457,9 @@ impl Default for VSCodeCustomization {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DevcontainerSpec {
-    pub template: TemplateRef,
+    /// Template reference (optional, vestigial from old system)
+    #[serde(default)]
+    pub template: Option<TemplateRef>,
     pub image: ImageRef,
     #[serde(default)]
     pub features: Vec<FeatureRef>,

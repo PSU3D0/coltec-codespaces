@@ -15,8 +15,8 @@ docker compose version >/dev/null || exit 1
 echo -n "  tailscale: "
 tailscale version || exit 1
 
-echo -n "  juicefs: "
-juicefs version || exit 1
+echo -n "  rclone: "
+rclone version | head -1 || exit 1
 
 echo ""
 echo "Validating docker group membership..."

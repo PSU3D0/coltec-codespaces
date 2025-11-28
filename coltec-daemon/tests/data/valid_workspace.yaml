@@ -70,15 +70,17 @@ persistence:
   mode: replicated
   scope: project
   mounts: []
-  rclone_config:
-    remote_name: r2coltec
-    type: s3
-    options:
-      provider: Cloudflare
-      access_key_id: ${S3_ACCESS_KEY_ID}
-      secret_access_key: ${S3_SECRET_ACCESS_KEY}
-      endpoint: ${JUICEFS_S3_ENDPOINT}
-      region: auto
+  default_remote: r2coltec
+  remotes:
+    r2coltec:
+      type: s3
+      bucket: coltec-workspaces
+      options:
+        provider: Cloudflare
+        access_key_id: ${S3_ACCESS_KEY_ID}
+        secret_access_key: ${S3_SECRET_ACCESS_KEY}
+        endpoint: ${S3_ENDPOINT}
+        region: auto
   multi_scope_volumes:
     global_refs: []
     project_refs: []

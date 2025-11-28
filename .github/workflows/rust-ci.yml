@@ -1,0 +1,111 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'coltec-daemon/**'
+      - '.github/workflows/rust-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'coltec-daemon/**'
+      - '.github/workflows/rust-ci.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: coltec-daemon
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: coltec-daemon
+
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Install rclone (for e2e tests)
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Run e2e tests
+        run: cargo test --test e2e_sync -- --ignored
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: coltec-daemon
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: coltec-daemon
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Strip binaries
+        run: |
+          strip target/release/coltec-daemon
+          strip target/release/coltec-validate
+
+      - name: Check binary size
+        run: |
+          ls -lh target/release/coltec-daemon
+          ls -lh target/release/coltec-validate
+          # Fail if daemon > 10MB
+          size=$(stat -c%s target/release/coltec-daemon)
+          if [ "$size" -gt 10485760 ]; then
+            echo "Binary too large: $size bytes (max 10MB)"
+            exit 1
+          fi
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: coltec-daemon-linux-amd64
+          path: |
+            coltec-daemon/target/release/coltec-daemon
+            coltec-daemon/target/release/coltec-validate
+          retention-days: 7

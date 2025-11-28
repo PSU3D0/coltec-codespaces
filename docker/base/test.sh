@@ -15,6 +15,15 @@ zsh --version || exit 1
 echo -n "  tmux: "
 tmux -V || exit 1
 
+echo -n "  rclone: "
+rclone --version | head -1 || exit 1
+
+echo -n "  coltec-daemon: "
+coltec-daemon --version || exit 1
+
+echo -n "  coltec-validate: "
+coltec-validate --version || exit 1
+
 echo ""
 echo "Testing user setup..."
 

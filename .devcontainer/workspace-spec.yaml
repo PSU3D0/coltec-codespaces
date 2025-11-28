@@ -1,0 +1,120 @@
+name: coltec-codespaces-dev
+version: 1.0.0
+metadata:
+  org: coltec
+  project: coltec-codespaces
+  environment: coltec-codespaces-dev
+  description: Coltec venture workspace for coltec/coltec-codespaces
+  tags:
+    - Monorepo (polyglot)
+    - coltec-venture
+    - coltec
+devcontainer:
+  image:
+    name: ghcr.io/psu3d0/coltec-codespace:main-base-dind-net
+  user: vscode
+  workspace_folder: /workspace
+  workspace_mount: source=${localWorkspaceFolder},target=/workspace,type=bind
+  run_args:
+    - --cap-add=SYS_PTRACE
+    - --security-opt=seccomp=unconfined
+    - --privileged
+  mounts:
+    - source: coltec-codespaces-dev-home
+      target: /home/vscode
+      type: volume
+    - source: coltec-codespaces-dev-cache
+      target: /home/vscode/.cache
+      type: volume
+    - source: coltec-codespaces-dev-venv
+      target: /workspace/codebase/.venv
+      type: volume
+    - source: coltec-codespaces-dev-node-modules
+      target: /workspace/codebase/node_modules
+      type: volume
+    - source: coltec-codespaces-dev-target
+      target: /workspace/codebase/target
+      type: volume
+  lifecycle:
+    post_create:
+      - ./.devcontainer/scripts/post-create.sh
+    post_start:
+      - ./.devcontainer/scripts/post-start.sh
+  customizations:
+    extensions:
+      recommended:
+        - ms-azuretools.vscode-docker
+        - ms-vscode.makefile-tools
+        - ms-vscode.remote-explorer
+        - fill-labs.dependi
+        - ms-python.python
+        - dbaeumer.vscode-eslint
+        - esbenp.prettier-vscode
+        - rust-lang.rust-analyzer
+        - tamasfe.even-better-toml
+    settings:
+      values:
+        terminal.integrated.defaultProfile.linux: tmux
+        terminal.integrated.profiles.linux:
+          zsh:
+            path: /usr/bin/zsh
+          resumable-tmux:
+            path: /usr/bin/tmux
+            args:
+              - new-session
+              - -A
+              - -s
+              - devcontainer
+        terminal.integrated.cwd: /workspace
+        terminal.integrated.localEchoEnabled: "on"
+        files.trimTrailingWhitespace: true
+        editor.formatOnSave: true
+        python.analysis.typeCheckingMode: strict
+        rust-analyzer.cargo.allFeatures: true
+        rust-analyzer.check.command: clippy
+        git.openRepositoryInParentFolders: always
+persistence:
+  enabled: true
+  mode: replicated
+  scope: project
+  default_remote: r2coltec
+  remotes:
+    r2coltec:
+      type: s3
+      bucket: coltec-workspaces
+      options:
+        provider: Cloudflare
+        access_key_id: ${RCLONE_S3_ACCESS_KEY_ID}
+        secret_access_key: ${RCLONE_S3_SECRET_ACCESS_KEY}
+        endpoint: ${RCLONE_S3_ENDPOINT}
+        region: auto
+  sync:
+    - name: agent-context
+      path: /workspace/agent-context
+      remote_path: workspaces/coltec/coltec-codespaces/coltec-codespaces-dev/agent-context
+      direction: bidirectional
+      interval: 60
+      priority: 1
+      exclude:
+        - .git/**
+        - __pycache__/**
+        - "*.pyc"
+        - node_modules/**
+        - .venv/**
+        - target/**
+    - name: scratch
+      path: /workspace/scratch
+      remote_path: workspaces/coltec/coltec-codespaces/coltec-codespaces-dev/scratch
+      direction: push-only
+      interval: 300
+      priority: 2
+      exclude:
+        - "*.tmp"
+        - "*.log"
+networking:
+  enabled: true
+  hostname_prefix: dev-
+  tags:
+    - tag:devcontainer
+    - tag:coltec
+generated_at: "2025-11-28T09:11:06Z"

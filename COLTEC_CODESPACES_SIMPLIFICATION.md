@@ -18,7 +18,7 @@ Simplify coltec-codespaces from a ~2000 line Python package to a composition of:
 - **DevPod** (optional) for workspace lifecycle
 - **rclone** for persistence
 - **Tailscale** for networking
-- **JSON Schema + ajv** for validation
+- **Rust-generated JSON Schema + coltec-validate** for validation (ajv optional)
 
 **Goal:** Replace custom Python with purpose-built components that scale to 50+ concurrent devcontainers.
 
@@ -88,22 +88,20 @@ Simplify coltec-codespaces from a ~2000 line Python package to a composition of:
 ### Repository Structure (Target)
 
 ```
-coltec-devcontainer-template/          # Standalone repo (gh:psu3d0/coltec-devcontainer)
-├── copier.yaml                        # Template configuration
-├── schema/
-│   └── workspace-spec.schema.json     # JSON Schema for validation
+coltec-codespaces/                     # Single repo (this repo)
+├── copier.yaml                        # Template configuration (root; _subdirectory: template)
 ├── template/                          # Copier template directory
 │   ├── .devcontainer/
-│   │   ├── devcontainer.json.jinja
-│   │   ├── workspace-spec.yaml.jinja
+│   │   ├── devcontainer.json.jinja    # Single template with project_type conditionals
+│   │   ├── workspace-spec.yaml.jinja  # Emits spec consumed by Rust schema/validator
 │   │   └── scripts/
 │   │       ├── post-create.sh.jinja
-│   │       └── post-start.sh.jinja    # Starts coltec-daemon
-│   ├── mise.toml.jinja
+│   │       └── post-start.sh.jinja
+│   ├── README-coltec-workspace.md.jinja
 │   └── {{ _copier_conf.answers_file }}.jinja
-└── README.md
-
-coltec-daemon/                         # Rust crate (gh:psu3d0/coltec-daemon)
+├── schema/
+│   └── workspace-spec.schema.json     # Generated from Rust types
+├── coltec-daemon/                     # Rust crate (in-repo)
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs                        # Entry point, signal handling
@@ -906,7 +904,7 @@ nexus/
 ## Phase 1: JSON Schema Validation
 
 ### Why
-Replace Pydantic with a schema generated from the Rust types we’ll use in the daemon, keeping validation in Rust (Node/ajv optional).
+Replace Pydantic with Rust types + schemars, generating the authoritative JSON Schema from Rust and validating with a Rust CLI (ajv optional/secondary).
 
 ### How
 1. Define workspace-spec types in `coltec-daemon` using `serde` + `schemars`.
@@ -924,20 +922,21 @@ coltec-daemon/
 ```
 
 ### Definition of Done
-- [ ] Rust types cover all workspace-spec.yaml fields
-- [ ] Generated schema produced from Rust types
-- [ ] `coltec-validate --file <spec>` passes on real workspaces and fails with helpful errors on bad specs
+- [x] Rust types cover all workspace-spec.yaml fields
+- [x] Generated schema produced from Rust types
+- [x] `coltec-validate --file <spec>` passes on real workspaces and fails with helpful errors on bad specs
 - [ ] (Optional) `ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d <spec>` works
 
 ### Test-Driven Completion Criteria
 ```bash
-# Valid config passes
-ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d coltec-daemon/tests/data/valid_workspace.yaml
-# Exit 0
+# Rust validator (authoritative)
+cargo test --manifest-path coltec-daemon/Cargo.toml
+coltec-validate --file coltec-daemon/tests/data/valid_workspace.yaml   # Exit 0
+coltec-validate --file coltec-daemon/tests/data/invalid_workspace.yaml # Exit 1, pretty error
 
-# Invalid config fails with helpful message
+# Optional ajv check (if installed)
+ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d coltec-daemon/tests/data/valid_workspace.yaml
 ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d coltec-daemon/tests/data/invalid_workspace.yaml
-# Exit 1, mentions specific field
 ```
 
 ---
@@ -945,22 +944,23 @@ ajv validate -s coltec-daemon/schema/workspace-spec.schema.json -d coltec-daemon
 ## Phase 2: Copier Template
 
 ### Why
-Replace custom Python template rendering with copier.
+Replace custom Python template rendering with copier; template lives in-repo under `template/` (no separate template repo for now).
 
 ### How
-1. Create `coltec-devcontainer-template` repo
-2. Convert Jinja2 templates to copier format
-3. Create copier.yaml with interactive prompts
-4. Test `copier copy` and `copier update`
+1. Keep `copier.yaml` at repo root with `_subdirectory: template`.
+2. Convert devcontainer + workspace-spec Jinja2 to a single copier-friendly template with `project_type` conditionals.
+3. Render devcontainer.json and workspace-spec.yaml during `copier copy`.
+4. Ensure template is git-tracked so `copier update` works (copier needs a VCS reference for diffs).
+5. Test `copier copy` and `copier update` against a temporary workspace.
 
 ### Where
 ```
-gh:psu3d0/coltec-devcontainer-template/
-├── copier.yaml
-├── schema/
-└── template/
-    ├── .devcontainer/
-    └── mise.toml.jinja
+copier.yaml          # root
+template/.devcontainer/devcontainer.json.jinja
+template/.devcontainer/workspace-spec.yaml.jinja
+template/.devcontainer/scripts/{post-create,post-start}.sh.jinja
+template/README-coltec-workspace.md.jinja
+template/{{ _copier_conf.answers_file }}.jinja
 ```
 
 ### copier.yaml (Key Sections)
@@ -1001,23 +1001,21 @@ sync_interval:
 ```
 
 ### Definition of Done
-- [ ] `copier copy` generates working workspace
-- [ ] `copier update` applies template changes
-- [ ] Generated files pass JSON Schema validation
+- [x] `copier copy` generates working workspace from in-repo template
+- [ ] `copier update` applies template changes (requires template path to be git-tracked)
+- [x] Generated files pass Rust schema validation (`coltec-validate`)
 - [ ] At least one real workspace migrated
 
 ### Test-Driven Completion Criteria
 ```bash
-# Generate workspace
-copier copy gh:psu3d0/coltec-devcontainer-template /tmp/test \
-  --data org=testorg --data project=testproject
+# Generate workspace from local template
+uv tool run copier copy . /tmp/test-workspace --trust
 
-# Validate
-ajv validate -s schema/workspace-spec.schema.json \
-  -d /tmp/test/.devcontainer/workspace-spec.yaml
+# Validate spec via Rust
+coltec-validate --file /tmp/test-workspace/.devcontainer/workspace-spec.yaml
 
-# Start container
-devcontainer up --workspace-folder /tmp/test
+# Update flow (template must be git-tracked)
+uv tool run copier update /tmp/test-workspace --trust
 ```
 
 ---
@@ -1031,32 +1029,44 @@ Bash scripts don't scale to 50+ containers. Rust provides:
 - Type-safe config parsing
 - Reliable signal handling
 
-### How
-1. Create `coltec-daemon` crate
-2. Implement config parsing with serde
-3. Implement sync loop with tokio
-4. Add CLI with clap (--once, --dry-run)
-5. Build and add to base image
+### Current State
+Phase 1 (types/schema) is complete. Phase 3 implementation is broken into 7 milestones in `RUST_DAEMON_PLAN.md`.
 
 ### Where
 ```
 coltec-daemon/
 ├── Cargo.toml
 ├── src/
-│   ├── main.rs
-│   ├── cli.rs
-│   ├── config.rs
-│   ├── sync.rs
-│   └── tailscale.rs
-└── tests/
+│   ├── lib.rs          # ✅ Complete: types + schema
+│   ├── bin/validate.rs # ✅ Complete: validator CLI
+│   ├── main.rs         # TODO: daemon entry point
+│   ├── cli.rs          # TODO: daemon CLI args
+│   ├── config.rs       # TODO: semantic validation
+│   ├── plan.rs         # TODO: sync planner
+│   ├── sync.rs         # TODO: rclone executor
+│   └── tailscale.rs    # TODO: optional networking
+├── schema/
+│   └── workspace-spec.schema.json  # ✅ Generated
+└── tests/data/
+    └── valid_workspace.yaml        # ✅ Test fixture
 ```
+
+### Milestones (see RUST_DAEMON_PLAN.md for details)
+1. **Config & Types Hardening** - Semantic validation beyond JSON Schema
+2. **CLI Surface & Wiring** - --config, --once, --dry-run, --validate-only, etc.
+3. **Sync Planning Layer** - Pure planner: config → SyncPlan
+4. **Execution Engine** - rclone integration with retries/backoff
+5. **Loop & Signals** - Interval loop, graceful shutdown
+6. **Observability & UX** - Structured logging, exit codes
+7. **Integration Hooks** - post-start.sh integration
 
 ### Definition of Done
 - [ ] `cargo build --release` produces <5MB binary
 - [ ] Daemon parses workspace-spec.yaml correctly
+- [ ] Semantic validation catches invariant violations
 - [ ] `--dry-run` shows what would sync without syncing
 - [ ] `--once` completes single sync pass and exits
-- [ ] Graceful shutdown on SIGTERM
+- [ ] Graceful shutdown on SIGTERM/SIGINT
 - [ ] Integration test with real R2
 
 ### Test-Driven Completion Criteria
@@ -1064,16 +1074,19 @@ coltec-daemon/
 # Unit tests
 cargo test
 
-# Config parsing
-coltec-daemon --config fixtures/valid.yaml --validate-only
+# Config parsing + semantic validation
+coltec-daemon --config tests/data/valid_workspace.yaml --validate-only
 # Exit 0
 
+coltec-daemon --config tests/data/invalid_replicated_no_sync.yaml --validate-only
+# Exit 1, error about replicated requiring sync paths
+
 # Dry run
-coltec-daemon --config fixtures/valid.yaml --once --dry-run
+coltec-daemon --config tests/data/valid_workspace.yaml --once --dry-run
 # Logs what would sync, exit 0
 
 # Integration (requires R2 credentials)
-coltec-daemon --config fixtures/valid.yaml --once
+RCLONE_BUCKET=coltec-workspaces coltec-daemon --config tests/data/valid_workspace.yaml --once
 # Actually syncs, exit 0
 
 # Memory check
@@ -1240,9 +1253,20 @@ run = "tailscale status --json | jq '.Peer[] | select(.Tags | contains([\"tag:de
 
 ### Global Migration
 - [ ] Phase 0: Tests
-- [ ] Phase 1: JSON Schema
-- [ ] Phase 2: Copier template
-- [ ] Phase 3: Rust daemon
+- [x] Phase 1: JSON Schema (Rust + schemars + coltec-validate)
+  - [x] Rust types in lib.rs
+  - [x] Schema generation via schemars
+  - [x] coltec-validate CLI binary
+  - [x] Test fixture (valid_workspace.yaml)
+- [ ] Phase 2: Copier template (copy done, update pending git-tracked template ref)
+- [ ] Phase 3: Rust daemon (see RUST_DAEMON_PLAN.md for 7 milestones)
+  - [ ] Milestone 1: Config & Types Hardening
+  - [ ] Milestone 2: CLI Surface & Wiring
+  - [ ] Milestone 3: Sync Planning Layer
+  - [ ] Milestone 4: Execution Engine
+  - [ ] Milestone 5: Loop & Signals
+  - [ ] Milestone 6: Observability & UX
+  - [ ] Milestone 7: Integration Hooks
 - [ ] Phase 4: Docker + Integration
 - [ ] Phase 5: Advanced (optional)
 - [ ] Archive Python package
