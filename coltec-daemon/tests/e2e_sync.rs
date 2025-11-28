@@ -6,7 +6,7 @@
 //! Run with: `cargo test --test e2e_sync -- --ignored`
 //! Or: `cargo test e2e -- --ignored`
 
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
@@ -113,7 +113,7 @@ fn test_push_only_creates_remote_files() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -166,7 +166,7 @@ fn test_push_only_does_not_pull_remote_files() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -214,7 +214,7 @@ fn test_pull_only_downloads_remote_files() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -256,7 +256,7 @@ fn test_pull_only_does_not_push_local_files() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -304,7 +304,7 @@ fn test_bidirectional_syncs_both_ways() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -361,7 +361,7 @@ fn test_bidirectional_second_run_no_resync() {
     fs::write(&config_path, &config).unwrap();
 
     // First run - should use resync
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -373,7 +373,7 @@ fn test_bidirectional_second_run_no_resync() {
     cmd.assert().success();
 
     // Second run - should NOT use resync
-    let mut cmd2 = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd2 = cargo_bin_cmd!("coltec-daemon");
     cmd2.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -424,7 +424,7 @@ fn test_multiple_sync_targets() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -480,7 +480,7 @@ fn test_exclude_patterns() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -536,7 +536,7 @@ fn test_dry_run_does_not_modify_files() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
@@ -577,7 +577,7 @@ fn test_missing_rclone_gives_clear_error() {
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     // Set PATH to empty to simulate missing rclone
     cmd.env("PATH", "")
         .env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
@@ -653,7 +653,7 @@ persistence:
     );
     fs::write(&config_path, &config).unwrap();
 
-    let mut cmd = Command::cargo_bin("coltec-daemon").unwrap();
+    let mut cmd = cargo_bin_cmd!("coltec-daemon");
     cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
         .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())

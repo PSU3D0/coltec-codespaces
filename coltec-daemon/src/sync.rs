@@ -527,12 +527,12 @@ mod tests {
 
         // Convert to string for assertion
         let args: Vec<_> = cmd.as_std().get_args().collect();
-        assert!(args.contains((&std::ffi::OsStr::new("--transfers"))));
-        assert!(args.contains((&std::ffi::OsStr::new("16"))));
-        assert!(args.contains((&std::ffi::OsStr::new("--checkers"))));
-        assert!(args.contains((&std::ffi::OsStr::new("32"))));
-        assert!(args.contains((&std::ffi::OsStr::new("--bwlimit"))));
-        assert!(args.contains((&std::ffi::OsStr::new("100M"))));
+        assert!(args.contains(&std::ffi::OsStr::new("--transfers")));
+        assert!(args.contains(&std::ffi::OsStr::new("16")));
+        assert!(args.contains(&std::ffi::OsStr::new("--checkers")));
+        assert!(args.contains(&std::ffi::OsStr::new("32")));
+        assert!(args.contains(&std::ffi::OsStr::new("--bwlimit")));
+        assert!(args.contains(&std::ffi::OsStr::new("100M")));
     }
 
     #[test]
@@ -544,11 +544,11 @@ mod tests {
 
         let args: Vec<_> = cmd.as_std().get_args().collect();
         // Should have default transfers and checkers
-        assert!(args.contains((&std::ffi::OsStr::new("--transfers"))));
-        assert!(args.contains((&std::ffi::OsStr::new("8"))));
-        assert!(args.contains((&std::ffi::OsStr::new("--checkers"))));
-        assert!(args.contains((&std::ffi::OsStr::new("16"))));
+        assert!(args.contains(&std::ffi::OsStr::new("--transfers")));
+        assert!(args.contains(&std::ffi::OsStr::new("8")));
+        assert!(args.contains(&std::ffi::OsStr::new("--checkers")));
+        assert!(args.contains(&std::ffi::OsStr::new("16")));
         // Should NOT have bwlimit
-        assert!(!args.contains((&std::ffi::OsStr::new("--bwlimit"))));
+        assert!(!args.contains(&std::ffi::OsStr::new("--bwlimit")));
     }
 }
