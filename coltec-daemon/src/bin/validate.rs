@@ -46,7 +46,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let file = args.file.expect("file is required unless --generate-schema");
+    let file = args
+        .file
+        .expect("file is required unless --generate-schema");
 
     let schema_json = if let Some(path) = args.schema {
         load_json_schema(&path)?

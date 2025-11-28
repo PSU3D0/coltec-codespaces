@@ -105,7 +105,11 @@ fn build_crypt_backend(remote: &ResolvedRemote, remote_path: &str) -> String {
         &inner_remote
     };
 
-    let mut opts = vec![format!("remote={}{}", inner_base, remote.wrap_path.as_deref().unwrap_or(""))];
+    let mut opts = vec![format!(
+        "remote={}{}",
+        inner_base,
+        remote.wrap_path.as_deref().unwrap_or("")
+    )];
 
     // Filename encryption setting
     if let Some(ref fe) = remote.filename_encryption {
@@ -246,7 +250,12 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
 
     debug!(cmd = ?cmd, "executing rclone command");
 
-    let output = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output().await {
+    let output = match cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+    {
         Ok(output) => output,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             error!("rclone not found - please install rclone");
@@ -422,7 +431,10 @@ mod tests {
     fn test_build_storage_backend_s3() {
         let mut options = BTreeMap::new();
         options.insert("provider".to_string(), "Cloudflare".to_string());
-        options.insert("endpoint".to_string(), "https://xxx.r2.cloudflarestorage.com".to_string());
+        options.insert(
+            "endpoint".to_string(),
+            "https://xxx.r2.cloudflarestorage.com".to_string(),
+        );
 
         let remote = ResolvedRemote {
             name: "r2".to_string(),
@@ -515,12 +527,12 @@ mod tests {
 
         // Convert to string for assertion
         let args: Vec<_> = cmd.as_std().get_args().collect();
-        assert!(args.contains(&&std::ffi::OsStr::new("--transfers")));
-        assert!(args.contains(&&std::ffi::OsStr::new("16")));
-        assert!(args.contains(&&std::ffi::OsStr::new("--checkers")));
-        assert!(args.contains(&&std::ffi::OsStr::new("32")));
-        assert!(args.contains(&&std::ffi::OsStr::new("--bwlimit")));
-        assert!(args.contains(&&std::ffi::OsStr::new("100M")));
+        assert!(args.contains((&std::ffi::OsStr::new("--transfers"))));
+        assert!(args.contains((&std::ffi::OsStr::new("16"))));
+        assert!(args.contains((&std::ffi::OsStr::new("--checkers"))));
+        assert!(args.contains((&std::ffi::OsStr::new("32"))));
+        assert!(args.contains((&std::ffi::OsStr::new("--bwlimit"))));
+        assert!(args.contains((&std::ffi::OsStr::new("100M"))));
     }
 
     #[test]
@@ -532,11 +544,11 @@ mod tests {
 
         let args: Vec<_> = cmd.as_std().get_args().collect();
         // Should have default transfers and checkers
-        assert!(args.contains(&&std::ffi::OsStr::new("--transfers")));
-        assert!(args.contains(&&std::ffi::OsStr::new("8")));
-        assert!(args.contains(&&std::ffi::OsStr::new("--checkers")));
-        assert!(args.contains(&&std::ffi::OsStr::new("16")));
+        assert!(args.contains((&std::ffi::OsStr::new("--transfers"))));
+        assert!(args.contains((&std::ffi::OsStr::new("8"))));
+        assert!(args.contains((&std::ffi::OsStr::new("--checkers"))));
+        assert!(args.contains((&std::ffi::OsStr::new("16"))));
         // Should NOT have bwlimit
-        assert!(!args.contains(&&std::ffi::OsStr::new("--bwlimit")));
+        assert!(!args.contains((&std::ffi::OsStr::new("--bwlimit"))));
     }
 }

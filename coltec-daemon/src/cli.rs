@@ -23,7 +23,11 @@ pub enum LogFormat {
 #[command(about = "Sync daemon for Coltec devcontainer workspaces")]
 pub struct Args {
     /// Path to workspace-spec.yaml
-    #[arg(short, long, default_value = "/workspace/.devcontainer/workspace-spec.yaml")]
+    #[arg(
+        short,
+        long,
+        default_value = "/workspace/.devcontainer/workspace-spec.yaml"
+    )]
     #[arg(env = "COLTEC_CONFIG")]
     pub config: PathBuf,
 

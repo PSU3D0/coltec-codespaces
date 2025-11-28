@@ -38,7 +38,9 @@ pub enum ConfigError {
     #[error("default_remote '{0}' does not exist in remotes")]
     DefaultRemoteNotFound(String),
 
-    #[error("sync path '{path_name}' references remote '{remote_name}' which does not exist in remotes")]
+    #[error(
+        "sync path '{path_name}' references remote '{remote_name}' which does not exist in remotes"
+    )]
     SyncPathRemoteNotFound {
         path_name: String,
         remote_name: String,

@@ -159,9 +159,10 @@ impl<'a> PlanContext<'a> {
     fn resolve_remote_config(&self, name: &str, config: &RemoteConfig) -> Option<ResolvedRemote> {
         // For crypt remotes, recursively resolve the wrapped remote
         let wrap_remote = if config.r#type == "crypt" {
-            config.wrap_remote.as_ref().and_then(|wrap_name| {
-                self.resolve_remote(wrap_name).map(Box::new)
-            })
+            config
+                .wrap_remote
+                .as_ref()
+                .and_then(|wrap_name| self.resolve_remote(wrap_name).map(Box::new))
         } else {
             None
         };
@@ -272,7 +273,11 @@ fn sync_path_to_action(
     // Apply path_prefix if remote has one
     let remote_path = if let Some(ref r) = remote {
         if let Some(ref prefix) = r.path_prefix {
-            format!("{}/{}", prefix.trim_end_matches('/'), ctx.resolve(&sp.remote_path))
+            format!(
+                "{}/{}",
+                prefix.trim_end_matches('/'),
+                ctx.resolve(&sp.remote_path)
+            )
         } else {
             ctx.resolve(&sp.remote_path)
         }
@@ -300,9 +305,7 @@ fn volume_to_action(
     interval_override: Option<u64>,
 ) -> SyncAction {
     // Volumes use the default remote (no per-volume override currently)
-    let remote = ctx
-        .default_remote
-        .and_then(|name| ctx.resolve_remote(name));
+    let remote = ctx.default_remote.and_then(|name| ctx.resolve_remote(name));
 
     // Volumes don't have per-path operation overrides, use defaults
     let operation = ctx.resolve_operation(None, None, None);
@@ -310,7 +313,11 @@ fn volume_to_action(
     // Apply path_prefix if remote has one
     let remote_path = if let Some(ref r) = remote {
         if let Some(ref prefix) = r.path_prefix {
-            format!("{}/{}", prefix.trim_end_matches('/'), ctx.resolve(&vol.remote_path))
+            format!(
+                "{}/{}",
+                prefix.trim_end_matches('/'),
+                ctx.resolve(&vol.remote_path)
+            )
         } else {
             ctx.resolve(&vol.remote_path)
         }
@@ -352,10 +359,7 @@ mod tests {
             "workspaces/myorg/myproj/dev/data"
         );
 
-        assert_eq!(
-            ctx.resolve("{org}-{project}-{env}"),
-            "myorg-myproj-dev"
-        );
+        assert_eq!(ctx.resolve("{org}-{project}-{env}"), "myorg-myproj-dev");
 
         // No placeholders
         assert_eq!(ctx.resolve("static/path"), "static/path");
@@ -678,10 +682,7 @@ persistence:
         assert_eq!(remote.name, "secondary");
         assert_eq!(remote.bucket, Some("secondary-bucket".to_string()));
         // No path_prefix on secondary
-        assert_eq!(
-            logs_action.remote_path,
-            "testorg/testproject/dev/logs"
-        );
+        assert_eq!(logs_action.remote_path, "testorg/testproject/dev/logs");
     }
 
     #[test]

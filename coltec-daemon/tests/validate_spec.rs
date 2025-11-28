@@ -8,13 +8,10 @@ use std::path::PathBuf;
 #[test]
 fn parses_valid_fixture() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let data = fs::read_to_string(
-        manifest_dir.join("tests/data/valid_workspace.yaml"),
-    )
-    .expect("fixture present");
+    let data = fs::read_to_string(manifest_dir.join("tests/data/valid_workspace.yaml"))
+        .expect("fixture present");
 
-    let spec: WorkspaceSpec =
-        serde_yaml::from_str(&data).expect("yaml parses into spec");
+    let spec: WorkspaceSpec = serde_yaml::from_str(&data).expect("yaml parses into spec");
 
     assert_eq!(spec.name, "env-test");
     assert_eq!(spec.metadata.org, "test-org");

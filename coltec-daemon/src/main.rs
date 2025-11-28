@@ -109,7 +109,10 @@ async fn run(args: Args) -> Result<Option<ShutdownSignal>> {
     if args.validate_only {
         let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
         if is_tty {
-            println!("\x1b[1;32m✓\x1b[0m configuration valid: {}", args.config.display());
+            println!(
+                "\x1b[1;32m✓\x1b[0m configuration valid: {}",
+                args.config.display()
+            );
         } else {
             println!("configuration valid: {}", args.config.display());
         }
@@ -171,10 +174,7 @@ async fn run(args: Args) -> Result<Option<ShutdownSignal>> {
         let result = execute_plan(&plan, args.dry_run).await?;
 
         if result.all_success() {
-            info!(
-                success = result.success_count,
-                "single sync pass complete"
-            );
+            info!(success = result.success_count, "single sync pass complete");
         } else {
             error!(
                 success = result.success_count,
@@ -283,10 +283,7 @@ async fn run_one_pass(plan: &SyncPlan, dry_run: bool) {
     match execute_plan(plan, dry_run).await {
         Ok(result) => {
             if result.all_success() {
-                info!(
-                    success = result.success_count,
-                    "sync pass complete"
-                );
+                info!(success = result.success_count, "sync pass complete");
             } else {
                 warn!(
                     success = result.success_count,
@@ -316,7 +313,8 @@ async fn wait_for_shutdown_signal() -> ShutdownSignal {
     {
         use tokio::signal::unix::{signal, SignalKind};
 
-        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
 
         tokio::select! {
             result = tokio::signal::ctrl_c() => {

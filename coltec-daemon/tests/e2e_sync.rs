@@ -671,7 +671,11 @@ persistence:
     let high_pos = stdout.find("high-priority");
     let low_pos = stdout.find("low-priority");
 
-    assert!(high_pos.is_some(), "high-priority should be logged, got: {}", stdout);
+    assert!(
+        high_pos.is_some(),
+        "high-priority should be logged, got: {}",
+        stdout
+    );
     assert!(low_pos.is_some(), "low-priority should be logged");
     assert!(
         high_pos.unwrap() < low_pos.unwrap(),

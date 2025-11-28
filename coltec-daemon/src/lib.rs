@@ -9,8 +9,8 @@ pub mod sync;
 
 pub use config::{load_and_validate, ConfigError};
 pub use plan::{build_plan, OperationSettings, PlanContext, ResolvedRemote, SyncAction, SyncPlan};
-pub use sync::{execute_plan, execute_sync, PlanResult, SyncResult};
 pub use schemars::schema_for;
+pub use sync::{execute_plan, execute_sync, PlanResult, SyncResult};
 
 pub fn workspace_schema() -> schemars::schema::RootSchema {
     schema_for!(WorkspaceSpec)
@@ -275,6 +275,7 @@ pub struct MultiScopeVolumes {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct PersistenceSpec {
     #[serde(default)]
     pub enabled: bool,
@@ -304,21 +305,6 @@ pub struct PersistenceSpec {
     pub multi_scope_volumes: Option<MultiScopeVolumes>,
 }
 
-impl Default for PersistenceSpec {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            mode: PersistenceMode::default(),
-            scope: PersistenceScope::default(),
-            mounts: Vec::new(),
-            remotes: std::collections::BTreeMap::new(),
-            default_remote: None,
-            defaults: None,
-            sync: Vec::new(),
-            multi_scope_volumes: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -387,6 +373,7 @@ fn default_read_only() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct LifecycleHooks {
     #[serde(default)]
     pub post_create: Vec<String>,
@@ -394,17 +381,10 @@ pub struct LifecycleHooks {
     pub post_start: Vec<String>,
 }
 
-impl Default for LifecycleHooks {
-    fn default() -> Self {
-        Self {
-            post_create: Vec::new(),
-            post_start: Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct VSCodeExtensions {
     #[serde(default)]
     pub recommended: Vec<String>,
@@ -412,32 +392,19 @@ pub struct VSCodeExtensions {
     pub optional: Vec<String>,
 }
 
-impl Default for VSCodeExtensions {
-    fn default() -> Self {
-        Self {
-            recommended: Vec::new(),
-            optional: Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct VSCodeSettings {
     #[serde(default)]
     pub values: std::collections::BTreeMap<String, Value>,
 }
 
-impl Default for VSCodeSettings {
-    fn default() -> Self {
-        Self {
-            values: std::collections::BTreeMap::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct VSCodeCustomization {
     #[serde(default)]
     pub extensions: VSCodeExtensions,
@@ -445,14 +412,6 @@ pub struct VSCodeCustomization {
     pub settings: VSCodeSettings,
 }
 
-impl Default for VSCodeCustomization {
-    fn default() -> Self {
-        Self {
-            extensions: VSCodeExtensions::default(),
-            settings: VSCodeSettings::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
