@@ -305,7 +305,6 @@ pub struct PersistenceSpec {
     pub multi_scope_volumes: Option<MultiScopeVolumes>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateRef {
@@ -381,7 +380,6 @@ pub struct LifecycleHooks {
     pub post_start: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
@@ -392,7 +390,6 @@ pub struct VSCodeExtensions {
     pub optional: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
@@ -400,7 +397,6 @@ pub struct VSCodeSettings {
     #[serde(default)]
     pub values: std::collections::BTreeMap<String, Value>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -411,7 +407,6 @@ pub struct VSCodeCustomization {
     #[serde(default)]
     pub settings: VSCodeSettings,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
