@@ -12,7 +12,7 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-/// Generate a workspace-spec YAML for testing.
+/// Generate a workspace-spec YAML for testing with local filesystem remote.
 fn make_config(remote_name: &str, sync_entries: &str) -> String {
     format!(
         r#"
@@ -30,8 +30,10 @@ devcontainer:
 persistence:
   enabled: true
   mode: replicated
-  rclone_config:
-    remote_name: {remote_name}
+  default_remote: {remote_name}
+  remotes:
+    {remote_name}:
+      type: local
   sync:
 {sync_entries}
 "#,
@@ -41,7 +43,8 @@ persistence:
 }
 
 /// Generate a sync entry for the config.
-fn sync_entry(name: &str, local_path: &Path, remote_path: &str, direction: &str) -> String {
+/// For local backend testing, remote_path should be the full absolute path.
+fn sync_entry(name: &str, local_path: &Path, remote_path: &Path, direction: &str) -> String {
     format!(
         r#"    - name: {name}
       path: {local_path}
@@ -52,16 +55,17 @@ fn sync_entry(name: &str, local_path: &Path, remote_path: &str, direction: &str)
 "#,
         name = name,
         local_path = local_path.to_str().unwrap(),
-        remote_path = remote_path,
+        remote_path = remote_path.to_str().unwrap(),
         direction = direction,
     )
 }
 
 /// Generate a sync entry with excludes.
+/// For local backend testing, remote_path should be the full absolute path.
 fn sync_entry_with_excludes(
     name: &str,
     local_path: &Path,
-    remote_path: &str,
+    remote_path: &Path,
     direction: &str,
     excludes: &[&str],
 ) -> String {
@@ -81,7 +85,7 @@ fn sync_entry_with_excludes(
 {excludes}"#,
         name = name,
         local_path = local_path.to_str().unwrap(),
-        remote_path = remote_path,
+        remote_path = remote_path.to_str().unwrap(),
         direction = direction,
         excludes = exclude_yaml,
     )
@@ -109,14 +113,13 @@ fn test_push_only_creates_remote_files() {
     fs::create_dir_all(local_dir.join("subdir")).unwrap();
     fs::write(local_dir.join("subdir/file2.txt"), "nested file").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "push-only");
+    let remote_data = remote_dir.join("data");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "push-only");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -126,7 +129,6 @@ fn test_push_only_creates_remote_files() {
     cmd.assert().success();
 
     // Verify files were pushed to remote
-    let remote_data = remote_dir.join("data");
     assert!(
         remote_data.join("file1.txt").exists(),
         "file1.txt should exist in remote"
@@ -162,14 +164,12 @@ fn test_push_only_does_not_pull_remote_files() {
     // Create local file (should be pushed)
     fs::write(local_dir.join("local-only.txt"), "from local").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "push-only");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "push-only");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -210,14 +210,12 @@ fn test_pull_only_downloads_remote_files() {
     fs::create_dir_all(&remote_data).unwrap();
     fs::write(remote_data.join("remote-file.txt"), "from remote").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "pull-only");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "pull-only");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -252,14 +250,12 @@ fn test_pull_only_does_not_push_local_files() {
     let remote_data = remote_dir.join("data");
     fs::create_dir_all(&remote_data).unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "pull-only");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "pull-only");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -300,14 +296,12 @@ fn test_bidirectional_syncs_both_ways() {
     fs::create_dir_all(&remote_data).unwrap();
     fs::write(remote_data.join("remote-file.txt"), "from remote").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "bidirectional");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "bidirectional");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -356,15 +350,13 @@ fn test_bidirectional_second_run_no_resync() {
     fs::create_dir_all(&remote_data).unwrap();
     fs::write(remote_data.join("file.txt"), "content").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "bidirectional");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "bidirectional");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     // First run - should use resync
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -374,9 +366,7 @@ fn test_bidirectional_second_run_no_resync() {
 
     // Second run - should NOT use resync
     let mut cmd2 = cargo_bin_cmd!("coltec-daemon");
-    cmd2.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd2.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -416,18 +406,18 @@ fn test_multiple_sync_targets() {
     fs::write(local_code.join("main.rs"), "fn main() {}").unwrap();
     fs::write(local_config.join("settings.json"), "{}").unwrap();
 
+    let remote_code = remote_dir.join("code");
+    let remote_config = remote_dir.join("config");
     let sync_entries = format!(
         "{}{}",
-        sync_entry("code", &local_code, "code", "push-only"),
-        sync_entry("config", &local_config, "config", "push-only"),
+        sync_entry("code", &local_code, &remote_code, "push-only"),
+        sync_entry("config", &local_config, &remote_config, "push-only"),
     );
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -437,7 +427,7 @@ fn test_multiple_sync_targets() {
     cmd.assert().success();
 
     // Both targets should be synced
-    assert!(remote_dir.join("code/main.rs").exists());
+    assert!(remote_code.join("main.rs").exists());
     assert!(remote_dir.join("config/settings.json").exists());
 }
 
@@ -470,10 +460,11 @@ fn test_exclude_patterns() {
     .unwrap();
     fs::write(local_dir.join("data.tmp"), "temporary").unwrap();
 
+    let remote_code = remote_dir.join("code");
     let sync_entries = sync_entry_with_excludes(
         "code",
         &local_dir,
-        "code",
+        &remote_code,
         "push-only",
         &[".git/**", "node_modules/**", "*.tmp"],
     );
@@ -481,9 +472,7 @@ fn test_exclude_patterns() {
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -491,8 +480,6 @@ fn test_exclude_patterns() {
         .arg("debug");
 
     cmd.assert().success();
-
-    let remote_code = remote_dir.join("code");
 
     // main.rs should be synced
     assert!(remote_code.join("main.rs").exists(), "main.rs should sync");
@@ -532,14 +519,13 @@ fn test_dry_run_does_not_modify_files() {
     // Create local file
     fs::write(local_dir.join("file.txt"), "content").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "push-only");
+    let remote_data = remote_dir.join("data");
+    let sync_entries = sync_entry("data", &local_dir, &remote_data, "push-only");
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
@@ -551,7 +537,7 @@ fn test_dry_run_does_not_modify_files() {
 
     // Remote should NOT have the file (dry run)
     assert!(
-        !remote_dir.join("data/file.txt").exists(),
+        !remote_data.join("file.txt").exists(),
         "dry-run should not create remote files"
     );
 }
@@ -573,15 +559,18 @@ fn test_missing_rclone_gives_clear_error() {
 
     fs::write(local_dir.join("file.txt"), "content").unwrap();
 
-    let sync_entries = sync_entry("data", &local_dir, "data", "push-only");
+    let sync_entries = sync_entry(
+        "data",
+        &local_dir,
+        Path::new("/nonexistent/data"),
+        "push-only",
+    );
     let config = make_config("testremote", &sync_entries);
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
     // Set PATH to empty to simulate missing rclone
     cmd.env("PATH", "")
-        .env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", "/nonexistent")
         .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
@@ -614,6 +603,9 @@ fn test_sync_order_respects_priority() {
     fs::write(local_high.join("high.txt"), "high priority").unwrap();
     fs::write(local_low.join("low.txt"), "low priority").unwrap();
 
+    let remote_low = remote_dir.join("low");
+    let remote_high = remote_dir.join("high");
+
     // Define low priority first in YAML, high priority second
     // But high priority (1) should sync before low priority (5)
     let config = format!(
@@ -632,31 +624,33 @@ devcontainer:
 persistence:
   enabled: true
   mode: replicated
-  rclone_config:
-    remote_name: testremote
+  default_remote: testremote
+  remotes:
+    testremote:
+      type: local
   sync:
     - name: low-priority
       path: {local_low}
-      remote_path: low
+      remote_path: {remote_low}
       direction: push-only
       interval: 60
       priority: 5
     - name: high-priority
       path: {local_high}
-      remote_path: high
+      remote_path: {remote_high}
       direction: push-only
       interval: 60
       priority: 1
 "#,
         local_low = local_low.to_str().unwrap(),
         local_high = local_high.to_str().unwrap(),
+        remote_low = remote_low.to_str().unwrap(),
+        remote_high = remote_high.to_str().unwrap(),
     );
     fs::write(&config_path, &config).unwrap();
 
     let mut cmd = cargo_bin_cmd!("coltec-daemon");
-    cmd.env("RCLONE_CONFIG_TESTREMOTE_TYPE", "local")
-        .env("RCLONE_BUCKET", remote_dir.to_str().unwrap())
-        .env("XDG_DATA_HOME", state_dir.to_str().unwrap())
+    cmd.env("XDG_DATA_HOME", state_dir.to_str().unwrap())
         .arg("--config")
         .arg(&config_path)
         .arg("--once")
