@@ -68,21 +68,16 @@ fn default_remote_type() -> String {
 // =============================================================================
 
 /// Filename encryption mode for rclone crypt remotes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FilenameEncryption {
     /// Full filename encryption (max ~143 characters)
+    #[default]
     Standard,
     /// Lightweight rotation-based obfuscation (longer names allowed)
     Obfuscate,
     /// Names remain visible; only ".bin" extensions are added
     Off,
-}
-
-impl Default for FilenameEncryption {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 /// Encryption configuration for rclone crypt remotes.
@@ -160,21 +155,16 @@ pub struct SyncDefaults {
     pub bwlimit: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncDirection {
     #[serde(alias = "bidirectional")]
+    #[default]
     Bidirectional,
     #[serde(alias = "pull-only")]
     PullOnly,
     #[serde(alias = "push-only")]
     PushOnly,
-}
-
-impl Default for SyncDirection {
-    fn default() -> Self {
-        Self::Bidirectional
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -218,30 +208,20 @@ fn default_sync_priority() -> u8 {
     2
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum PersistenceMode {
+    #[default]
     Mounted,
     Replicated,
 }
 
-impl Default for PersistenceMode {
-    fn default() -> Self {
-        Self::Mounted
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum PersistenceScope {
+    #[default]
     Project,
     Environment,
-}
-
-impl Default for PersistenceScope {
-    fn default() -> Self {
-        Self::Project
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -330,19 +310,14 @@ pub struct FeatureRef {
     pub options: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MountType {
     Bind,
+    #[default]
     Volume,
     Tmpfs,
     Symlink,
-}
-
-impl Default for MountType {
-    fn default() -> Self {
-        Self::Volume
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

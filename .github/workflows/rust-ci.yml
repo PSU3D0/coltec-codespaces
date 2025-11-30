@@ -30,6 +30,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91.1"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -55,6 +57,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.91.1"
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -76,6 +79,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91.1"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
