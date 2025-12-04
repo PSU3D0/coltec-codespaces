@@ -5,14 +5,24 @@
 //! - Executing rclone commands with proper flags
 //! - Building dynamic rclone config for named remotes
 //! - Handling errors and recoverable conditions
+//! - Retry with exponential backoff for transient failures
+//! - Health file updates for supervisor integration
 
 use crate::plan::{OperationSettings, ResolvedRemote, SyncAction, SyncPlan};
 use crate::SyncDirection;
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
+
+/// Default number of retry attempts for transient failures.
+const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff (doubles each retry).
+const RETRY_BASE_DELAY_MS: u64 = 1000;
 
 /// Get the state directory for a workspace.
 ///
@@ -46,6 +56,92 @@ pub async fn mark_initialized(workspace: &str, action_name: &str) -> Result<()> 
     Ok(())
 }
 
+/// Health status for supervisor integration.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HealthStatus {
+    /// Whether the last sync pass succeeded
+    pub healthy: bool,
+    /// Timestamp of the last successful sync (Unix epoch seconds)
+    pub last_success: Option<u64>,
+    /// Timestamp of the last sync attempt
+    pub last_attempt: u64,
+    /// Number of consecutive failures
+    pub consecutive_failures: u32,
+    /// Last error message if unhealthy
+    pub last_error: Option<String>,
+}
+
+/// Get the health file path for a workspace.
+pub fn health_file_path(workspace: &str) -> std::path::PathBuf {
+    state_dir(workspace).join("health.json")
+}
+
+/// Update the health file after a sync pass.
+pub async fn update_health(workspace: &str, result: &PlanResult) -> Result<()> {
+    let health_path = health_file_path(workspace);
+    let state = state_dir(workspace);
+
+    tokio::fs::create_dir_all(&state)
+        .await
+        .with_context(|| format!("failed to create state dir: {}", state.display()))?;
+
+    // Read existing health status
+    let mut status = if health_path.exists() {
+        let content = tokio::fs::read_to_string(&health_path).await.ok();
+        content
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or(HealthStatus {
+                healthy: true,
+                last_success: None,
+                last_attempt: 0,
+                consecutive_failures: 0,
+                last_error: None,
+            })
+    } else {
+        HealthStatus {
+            healthy: true,
+            last_success: None,
+            last_attempt: 0,
+            consecutive_failures: 0,
+            last_error: None,
+        }
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    status.last_attempt = now;
+
+    if result.all_success() {
+        status.healthy = true;
+        status.last_success = Some(now);
+        status.consecutive_failures = 0;
+        status.last_error = None;
+    } else {
+        status.consecutive_failures += 1;
+        // Mark unhealthy after 3 consecutive failures
+        if status.consecutive_failures >= 3 {
+            status.healthy = false;
+        }
+        // Capture the first error
+        status.last_error = result
+            .results
+            .iter()
+            .find_map(|r| r.error.clone());
+    }
+
+    let json = serde_json::to_string_pretty(&status)
+        .context("failed to serialize health status")?;
+    tokio::fs::write(&health_path, json)
+        .await
+        .with_context(|| format!("failed to write health file: {}", health_path.display()))?;
+
+    debug!(path = %health_path.display(), healthy = status.healthy, "updated health file");
+    Ok(())
+}
+
 /// Build an rclone backend connection string for a named remote.
 ///
 /// For S3-type remotes: `:s3,bucket=mybucket,provider=Cloudflare:path`
@@ -60,18 +156,91 @@ fn build_rclone_backend(remote: &ResolvedRemote, remote_path: &str) -> String {
     }
 }
 
+/// Expand environment variable references in a string.
+///
+/// Supports `${VAR}` and `$VAR` syntax. Unset variables are left unchanged.
+fn expand_env_vars(value: &str) -> String {
+    let mut result = value.to_string();
+
+    // Handle ${VAR} syntax - use index-based iteration to avoid infinite loops
+    let mut search_start = 0;
+    while let Some(rel_start) = result[search_start..].find("${") {
+        let start = search_start + rel_start;
+        if let Some(rel_end) = result[start..].find('}') {
+            let end = start + rel_end;
+            let var_name = &result[start + 2..end];
+            match std::env::var(var_name) {
+                Ok(replacement) => {
+                    result = format!("{}{}{}", &result[..start], replacement, &result[end + 1..]);
+                    search_start = start + replacement.len();
+                }
+                Err(_) => {
+                    // Skip past this ${VAR} to avoid infinite loop
+                    search_start = end + 1;
+                }
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Handle $VAR syntax (only alphanumeric and underscore)
+    let mut i = 0;
+    while i < result.len() {
+        if result[i..].starts_with('$') && !result[i..].starts_with("${") {
+            let rest = &result[i + 1..];
+            let var_end = rest
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(rest.len());
+            if var_end > 0 {
+                let var_name = &rest[..var_end];
+                match std::env::var(var_name) {
+                    Ok(replacement) => {
+                        result = format!("{}{}{}", &result[..i], replacement, &rest[var_end..]);
+                        i += replacement.len();
+                    }
+                    Err(_) => {
+                        // Skip past $VAR
+                        i += 1 + var_end;
+                    }
+                }
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    result
+}
+
+/// Quote a value for rclone connection string if it contains special characters.
+///
+/// Values with colons or commas need to be quoted. We use single quotes and
+/// double any internal single quotes per rclone's escaping rules.
+fn quote_rclone_value(value: &str) -> String {
+    if value.contains(':') || value.contains(',') || value.contains('\'') || value.contains('"') {
+        // Escape internal single quotes by doubling them
+        let escaped = value.replace('\'', "''");
+        format!("'{}'", escaped)
+    } else {
+        value.to_string()
+    }
+}
+
 /// Build a storage backend connection string (s3, gcs, etc.)
 fn build_storage_backend(remote: &ResolvedRemote, remote_path: &str) -> String {
     let mut opts = Vec::new();
 
     // Add bucket if present
     if let Some(ref bucket) = remote.bucket {
-        opts.push(format!("bucket={}", bucket));
+        let expanded = expand_env_vars(bucket);
+        opts.push(format!("bucket={}", quote_rclone_value(&expanded)));
     }
 
-    // Add all backend-specific options
+    // Add all backend-specific options, expanding env vars and quoting as needed
     for (key, value) in &remote.options {
-        opts.push(format!("{}={}", key, value));
+        let expanded = expand_env_vars(value);
+        opts.push(format!("{}={}", key, quote_rclone_value(&expanded)));
     }
 
     let opts_str = if opts.is_empty() {
@@ -157,11 +326,37 @@ pub struct SyncResult {
     pub error: Option<String>,
     /// Whether this was a first-time resync
     pub was_resync: bool,
+    /// Number of retry attempts made
+    pub attempts: u32,
 }
 
-/// Execute a single sync action.
+/// Check if an rclone error is likely transient and worth retrying.
+fn is_retryable_error(stderr: &str) -> bool {
+    // Network/connection errors
+    stderr.contains("connection reset")
+        || stderr.contains("connection refused")
+        || stderr.contains("timeout")
+        || stderr.contains("temporary failure")
+        || stderr.contains("network is unreachable")
+        || stderr.contains("no such host")
+        || stderr.contains("TLS handshake")
+        || stderr.contains("EOF")
+        // S3/cloud provider transient errors
+        || stderr.contains("503")
+        || stderr.contains("500")
+        || stderr.contains("429") // rate limit
+        || stderr.contains("SlowDown")
+        || stderr.contains("ServiceUnavailable")
+        || stderr.contains("InternalError")
+        // Bisync lock contention
+        || stderr.contains("lock file")
+        || stderr.contains("locked")
+}
+
+/// Execute a single sync action with retry logic.
 ///
 /// The remote target is built from the action's resolved remote configuration.
+/// Transient failures are retried with exponential backoff.
 #[instrument(skip_all, fields(name = %action.name, direction = ?action.direction))]
 pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> Result<SyncResult> {
     let result_name = action.name.clone();
@@ -174,6 +369,7 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
             success: true, // Not an error, just skip
             error: None,
             was_resync: false,
+            attempts: 0,
         });
     }
 
@@ -187,9 +383,98 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
                 success: false,
                 error: Some("no remote configured for sync action".into()),
                 was_resync: false,
+                attempts: 0,
             });
         }
     };
+
+    // Retry loop with exponential backoff
+    let mut last_error: Option<String> = None;
+    for attempt in 1..=DEFAULT_MAX_RETRIES {
+        match execute_sync_attempt(action, &remote_target, dry_run, resync).await {
+            Ok(()) => {
+                if attempt > 1 {
+                    info!(attempt, "sync succeeded after retry");
+                } else {
+                    info!("sync complete");
+                }
+                return Ok(SyncResult {
+                    name: result_name,
+                    success: true,
+                    error: None,
+                    was_resync: resync,
+                    attempts: attempt,
+                });
+            }
+            Err(SyncAttemptError::NotRetryable(msg)) => {
+                // Fatal error, don't retry
+                return Ok(SyncResult {
+                    name: result_name,
+                    success: false,
+                    error: Some(msg),
+                    was_resync: resync,
+                    attempts: attempt,
+                });
+            }
+            Err(SyncAttemptError::Skipped) => {
+                // Not an error, just skip (e.g., empty source)
+                return Ok(SyncResult {
+                    name: result_name,
+                    success: true,
+                    error: None,
+                    was_resync: resync,
+                    attempts: attempt,
+                });
+            }
+            Err(SyncAttemptError::Retryable(msg)) => {
+                last_error = Some(msg.clone());
+                if attempt < DEFAULT_MAX_RETRIES {
+                    let delay_ms = RETRY_BASE_DELAY_MS * 2u64.pow(attempt - 1);
+                    warn!(
+                        attempt,
+                        max_attempts = DEFAULT_MAX_RETRIES,
+                        delay_ms,
+                        error = %msg,
+                        "sync failed, retrying after backoff"
+                    );
+                    sleep(Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+    }
+
+    // All retries exhausted
+    error!(
+        attempts = DEFAULT_MAX_RETRIES,
+        error = ?last_error,
+        "sync failed after all retry attempts"
+    );
+    Ok(SyncResult {
+        name: result_name,
+        success: false,
+        error: last_error,
+        was_resync: resync,
+        attempts: DEFAULT_MAX_RETRIES,
+    })
+}
+
+/// Error type for a single sync attempt.
+enum SyncAttemptError {
+    /// Error that should be retried (transient)
+    Retryable(String),
+    /// Error that should not be retried (permanent)
+    NotRetryable(String),
+    /// Not an error, action was skipped
+    Skipped,
+}
+
+/// Execute a single attempt of an rclone sync.
+async fn execute_sync_attempt(
+    action: &SyncAction,
+    remote_target: &str,
+    dry_run: bool,
+    resync: bool,
+) -> std::result::Result<(), SyncAttemptError> {
     let local = &action.local_path;
 
     let mut cmd = Command::new("rclone");
@@ -214,7 +499,7 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
     // Choose sync mode based on direction
     match action.direction {
         SyncDirection::Bidirectional => {
-            cmd.args(["bisync", local, &remote_target]);
+            cmd.args(["bisync", local, remote_target]);
             cmd.args(["--resilient", "--recover", "--max-lock", "2m"]);
             if resync {
                 info!("first-time sync, using --resync");
@@ -222,10 +507,10 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
             }
         }
         SyncDirection::PushOnly => {
-            cmd.args(["sync", local, &remote_target]);
+            cmd.args(["sync", local, remote_target]);
         }
         SyncDirection::PullOnly => {
-            cmd.args(["sync", &remote_target, local]);
+            cmd.args(["sync", remote_target, local]);
         }
     }
 
@@ -258,16 +543,16 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
     {
         Ok(output) => output,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            error!("rclone not found - please install rclone");
-            return Ok(SyncResult {
-                name: result_name,
-                success: false,
-                error: Some("rclone not found - please install rclone".into()),
-                was_resync: resync,
-            });
+            return Err(SyncAttemptError::NotRetryable(
+                "rclone not found - please install rclone".into(),
+            ));
         }
         Err(e) => {
-            return Err(e).context("failed to execute rclone");
+            // IO errors when spawning are potentially transient
+            return Err(SyncAttemptError::Retryable(format!(
+                "failed to execute rclone: {}",
+                e
+            )));
         }
     };
 
@@ -279,26 +564,18 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
     }
 
     if !output.status.success() {
-        // Check for known recoverable errors
+        let stderr_str = stderr.to_string();
+
+        // Check for known recoverable errors (not retryable, just skip)
         if stderr.contains("directory not found") || stderr.contains("does not exist") {
             warn!("remote directory not found, will be created on next sync");
-            return Ok(SyncResult {
-                name: result_name,
-                success: true,
-                error: None,
-                was_resync: resync,
-            });
+            return Err(SyncAttemptError::Skipped);
         }
 
         // Check for empty source (not an error for bisync)
         if stderr.contains("empty") && action.direction == SyncDirection::Bidirectional {
             warn!("empty source directory, skipping");
-            return Ok(SyncResult {
-                name: result_name,
-                success: true,
-                error: None,
-                was_resync: resync,
-            });
+            return Err(SyncAttemptError::Skipped);
         }
 
         error!(
@@ -307,22 +584,15 @@ pub async fn execute_sync(action: &SyncAction, dry_run: bool, resync: bool) -> R
             "rclone failed"
         );
 
-        return Ok(SyncResult {
-            name: result_name,
-            success: false,
-            error: Some(stderr.to_string()),
-            was_resync: resync,
-        });
+        // Check if this error is retryable
+        if is_retryable_error(&stderr_str) {
+            return Err(SyncAttemptError::Retryable(stderr_str));
+        }
+
+        return Err(SyncAttemptError::NotRetryable(stderr_str));
     }
 
-    info!("sync complete");
-
-    Ok(SyncResult {
-        name: result_name,
-        success: true,
-        error: None,
-        was_resync: resync,
-    })
+    Ok(())
 }
 
 /// Result of executing an entire plan.
@@ -428,36 +698,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_storage_backend_s3() {
-        let mut options = BTreeMap::new();
-        options.insert("provider".to_string(), "Cloudflare".to_string());
-        options.insert(
-            "endpoint".to_string(),
-            "https://xxx.r2.cloudflarestorage.com".to_string(),
-        );
-
-        let remote = ResolvedRemote {
-            name: "r2".to_string(),
-            remote_type: "s3".to_string(),
-            bucket: Some("my-bucket".to_string()),
-            path_prefix: None,
-            options,
-            wrap_remote: None,
-            wrap_path: None,
-            password_env: None,
-            password2_env: None,
-            filename_encryption: None,
-            directory_name_encryption: None,
-        };
-
-        let backend = build_storage_backend(&remote, "workspaces/org/project/data");
-        assert!(backend.starts_with(":s3,"));
-        assert!(backend.contains("bucket=my-bucket"));
-        assert!(backend.contains("provider=Cloudflare"));
-        assert!(backend.ends_with(":workspaces/org/project/data"));
-    }
-
-    #[test]
     fn test_build_storage_backend_minimal() {
         let remote = ResolvedRemote {
             name: "simple".to_string(),
@@ -550,5 +790,104 @@ mod tests {
         assert!(args.contains(&std::ffi::OsStr::new("16")));
         // Should NOT have bwlimit
         assert!(!args.contains(&std::ffi::OsStr::new("--bwlimit")));
+    }
+
+    #[test]
+    fn test_expand_env_vars_braced() {
+        std::env::set_var("TEST_VAR_BRACED", "expanded_value");
+        assert_eq!(expand_env_vars("${TEST_VAR_BRACED}"), "expanded_value");
+        assert_eq!(
+            expand_env_vars("prefix_${TEST_VAR_BRACED}_suffix"),
+            "prefix_expanded_value_suffix"
+        );
+        std::env::remove_var("TEST_VAR_BRACED");
+    }
+
+    #[test]
+    fn test_expand_env_vars_unbraced() {
+        std::env::set_var("TEST_VAR_UNBRACED", "value123");
+        assert_eq!(expand_env_vars("$TEST_VAR_UNBRACED"), "value123");
+        assert_eq!(expand_env_vars("$TEST_VAR_UNBRACED/path"), "value123/path");
+        std::env::remove_var("TEST_VAR_UNBRACED");
+    }
+
+    #[test]
+    fn test_expand_env_vars_missing() {
+        // Missing env vars should keep original syntax
+        assert_eq!(
+            expand_env_vars("${NONEXISTENT_VAR_12345}"),
+            "${NONEXISTENT_VAR_12345}"
+        );
+    }
+
+    #[test]
+    fn test_expand_env_vars_no_expansion() {
+        assert_eq!(expand_env_vars("plain_string"), "plain_string");
+        assert_eq!(expand_env_vars("https://example.com"), "https://example.com");
+    }
+
+    #[test]
+    fn test_quote_rclone_value_no_special_chars() {
+        assert_eq!(quote_rclone_value("simple"), "simple");
+        assert_eq!(quote_rclone_value("Cloudflare"), "Cloudflare");
+        assert_eq!(quote_rclone_value("auto"), "auto");
+    }
+
+    #[test]
+    fn test_quote_rclone_value_with_colon() {
+        // URLs with colons need quoting
+        assert_eq!(
+            quote_rclone_value("https://example.com"),
+            "'https://example.com'"
+        );
+        assert_eq!(
+            quote_rclone_value("https://xxx.r2.cloudflarestorage.com"),
+            "'https://xxx.r2.cloudflarestorage.com'"
+        );
+    }
+
+    #[test]
+    fn test_quote_rclone_value_with_comma() {
+        assert_eq!(quote_rclone_value("a,b,c"), "'a,b,c'");
+    }
+
+    #[test]
+    fn test_quote_rclone_value_with_quotes() {
+        // Internal single quotes get doubled
+        assert_eq!(quote_rclone_value("it's"), "'it''s'");
+        // Double quotes also trigger quoting
+        assert_eq!(quote_rclone_value("say \"hi\""), "'say \"hi\"'");
+    }
+
+    #[test]
+    fn test_build_storage_backend_s3_with_url_endpoint() {
+        let mut options = BTreeMap::new();
+        options.insert("provider".to_string(), "Cloudflare".to_string());
+        options.insert(
+            "endpoint".to_string(),
+            "https://xxx.r2.cloudflarestorage.com".to_string(),
+        );
+
+        let remote = ResolvedRemote {
+            name: "r2".to_string(),
+            remote_type: "s3".to_string(),
+            bucket: Some("my-bucket".to_string()),
+            path_prefix: None,
+            options,
+            wrap_remote: None,
+            wrap_path: None,
+            password_env: None,
+            password2_env: None,
+            filename_encryption: None,
+            directory_name_encryption: None,
+        };
+
+        let backend = build_storage_backend(&remote, "workspaces/org/project/data");
+        assert!(backend.starts_with(":s3,"));
+        assert!(backend.contains("bucket=my-bucket"));
+        assert!(backend.contains("provider=Cloudflare"));
+        // Endpoint URL should be quoted because of colons
+        assert!(backend.contains("endpoint='https://xxx.r2.cloudflarestorage.com'"));
+        assert!(backend.ends_with(":workspaces/org/project/data"));
     }
 }

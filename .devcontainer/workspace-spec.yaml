@@ -35,6 +35,10 @@ devcontainer:
     - source: coltec-codespaces-dev-target
       target: /workspace/codebase/target
       type: volume
+    # Daemon state (bisync markers, health file) - persisted for sync continuity
+    - source: coltec-codespaces-dev-daemon-state
+      target: /home/vscode/.local/share/coltec-daemon
+      type: volume
   lifecycle:
     post_create:
       - ./.devcontainer/scripts/post-create.sh

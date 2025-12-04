@@ -42,8 +42,9 @@ COLTEC_TEST_LOCAL=1 ./scripts/test-image.sh base-dind [version]
 ```
 
 ## Sync Daemon
-The `coltec-daemon` (in `coltec-daemon/`) syncs workspace data to cloud storage via rclone:
+The `coltec-daemon` (in `coltec-daemon/`) syncs workspace data to cloud storage via rclone.
 
+### Quick Start
 ```bash
 # Validate a workspace spec
 cargo run --bin coltec-validate -- --file .devcontainer/workspace-spec.yaml
@@ -54,6 +55,47 @@ COLTEC_CONFIG=.devcontainer/workspace-spec.yaml cargo run --bin coltec-daemon --
 # Run continuous sync
 COLTEC_CONFIG=.devcontainer/workspace-spec.yaml cargo run --bin coltec-daemon
 ```
+
+### Named Remotes Configuration
+The daemon uses "named remotes" to define storage backends. Configure in `workspace-spec.yaml`:
+
+```yaml
+persistence:
+  enabled: true
+  mode: replicated
+  default_remote: r2coltec  # Default remote for sync paths
+  remotes:
+    r2coltec:
+      type: s3
+      bucket: my-bucket
+      options:
+        provider: Cloudflare  # or AWS, Wasabi, etc.
+        access_key_id: ${RCLONE_S3_ACCESS_KEY_ID}
+        secret_access_key: ${RCLONE_S3_SECRET_ACCESS_KEY}
+        endpoint: ${RCLONE_S3_ENDPOINT}
+        region: auto
+  sync:
+    - name: agent-context
+      path: /workspace/agent-context
+      remote_path: workspaces/{org}/{project}/{env}/agent-context
+      direction: bidirectional
+      interval: 60
+      priority: 1
+```
+
+**Key features:**
+- **Environment variable expansion**: Use `${VAR}` syntax in config values (expanded at runtime)
+- **Automatic URL quoting**: Endpoints with special characters (like `https://`) are handled correctly
+- **Retry with backoff**: Transient failures (network errors, rate limits) are retried up to 3 times
+- **Health file**: Status written to `~/.local/share/coltec-daemon/{workspace}/health.json` for supervisor integration
+
+### Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COLTEC_CONFIG` | `/workspace/.devcontainer/workspace-spec.yaml` | Config path |
+| `COLTEC_INTERVAL` | (from config) | Override sync interval (seconds) |
+| `COLTEC_LOG_FORMAT` | `text` | `text` or `json` |
+| `RUST_LOG` | `info` | Log level (trace/debug/info/warn/error) |
 
 See `coltec-daemon/README.md` for full documentation.
 

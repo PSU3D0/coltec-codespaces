@@ -23,6 +23,10 @@ devcontainer:
     - source: {{ env }}-cache
       target: /home/vscode/.cache
       type: volume
+    # Daemon state (bisync markers, health file) - persisted for sync continuity
+    - source: {{ env }}-daemon-state
+      target: /home/vscode/.local/share/coltec-daemon
+      type: volume
   lifecycle:
     post_create:
       - ./.devcontainer/scripts/post-create.sh
