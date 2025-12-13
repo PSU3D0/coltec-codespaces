@@ -53,5 +53,3 @@ persistence:
       priority: 2
       transfers: 4
       bwlimit: "10M"
-networking:
-  enabled: false

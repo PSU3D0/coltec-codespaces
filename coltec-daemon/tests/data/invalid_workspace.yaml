@@ -3,9 +3,6 @@ metadata:
   org: test-org
   project: test-proj
 devcontainer:
-  template:
-    name: python
-    path: devcontainer_templates/python.json.jinja2
   image:
     name: ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net
 persistence:

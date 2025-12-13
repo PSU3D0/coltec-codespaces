@@ -3,7 +3,6 @@
 //! JSON Schema validates structure; this module validates invariants like:
 //! - Replicated persistence mode requires sync paths
 //! - Sync intervals must be >= 10 seconds
-//! - Networking hostname prefix required when enabled
 //! - Remote references must exist in the remotes map
 //! - Crypt remotes require proper configuration
 
@@ -24,9 +23,6 @@ pub enum ConfigError {
 
     #[error("multi_scope_volumes.environment['{name}'] has interval < 10s (got {interval}s), minimum is 10s")]
     VolumeIntervalTooLow { name: String, interval: u64 },
-
-    #[error("networking.enabled=true but networking.hostname_prefix is empty")]
-    NetworkingMissingHostname,
 
     #[error("duplicate sync path name: '{0}'")]
     DuplicateSyncPathName(String),
@@ -112,12 +108,7 @@ impl WorkspaceSpec {
             }
         }
 
-        // Invariant 3: networking hostname prefix required if enabled
-        if self.networking.enabled && self.networking.hostname_prefix.is_empty() {
-            return Err(ConfigError::NetworkingMissingHostname);
-        }
-
-        // Invariant 4: no duplicate sync path names
+        // Invariant 3: no duplicate sync path names
         let mut seen_sync = HashSet::new();
         for sp in &self.persistence.sync {
             if !seen_sync.insert(&sp.name) {

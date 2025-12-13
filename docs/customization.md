@@ -333,4 +333,4 @@ exclude:
 
 - [VS Code Dotfiles Documentation](https://code.visualstudio.com/docs/devcontainers/containers#_personalizing-with-dotfile-repositories)
 - [DevPod Dotfiles](https://devpod.sh/docs/developing-in-workspaces/dotfiles-in-a-workspace)
-- [Coltec Daemon README](../coltec-daemon/README.md)
+- [Coltec Daemon](../coltec-daemon/)

@@ -3,53 +3,69 @@ set -euo pipefail
 
 echo "[post-start] Starting workspace ${WORKSPACE_NAME:-unknown}"
 
+CONF="/workspace/.devcontainer/supervisord.conf"
+LOG_DIR="/workspace/.devcontainer/logs"
+PID_FILE="/workspace/.devcontainer/supervisord.pid"
 CONFIG_PATH="${COLTEC_CONFIG:-/workspace/.devcontainer/workspace-spec.yaml}"
 
-# Skip if explicitly disabled
 if [[ "${COLTEC_DISABLED:-false}" == "true" ]]; then
-  echo "[post-start] COLTEC_DISABLED=true, skipping daemon"
+  echo "[post-start] COLTEC_DISABLED=true, skipping"
   exit 0
 fi
 
-# Skip if no config
 if [[ ! -f "$CONFIG_PATH" ]]; then
-  echo "[post-start] No workspace-spec.yaml found, skipping daemon"
+  echo "[post-start] No workspace-spec.yaml found at $CONFIG_PATH, skipping"
   exit 0
 fi
 
-# Skip if daemon not installed
 if ! command -v coltec-daemon >/dev/null 2>&1; then
   echo "[post-start] coltec-daemon not installed, skipping"
   exit 0
 fi
 
-# Validate config
-if ! coltec-validate --file "$CONFIG_PATH"; then
-  echo "[post-start] ERROR: Invalid workspace-spec.yaml"
+if ! command -v coltec-validate >/dev/null 2>&1; then
+  echo "[post-start] coltec-validate not installed, skipping"
+  exit 0
+fi
+
+echo "[post-start] Validating workspace-spec.yaml..."
+coltec-validate --file "$CONFIG_PATH"
+
+if [[ -z "${RCLONE_S3_ACCESS_KEY_ID:-}" ]] && [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
+  echo "[post-start] No storage credentials, running daemon once in dry-run mode"
+  coltec-daemon --config "$CONFIG_PATH" --once --dry-run || true
+  exit 0
+fi
+
+mkdir -p "${LOG_DIR}"
+
+if ! command -v supervisord >/dev/null 2>&1; then
+  echo "[post-start] ERROR: supervisord not installed" >&2
   exit 1
 fi
 
-# Start Tailscale if auth key provided
-if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]] && command -v tailscale >/dev/null 2>&1; then
-  echo "[post-start] Starting Tailscale..."
-  sudo tailscaled --tun=userspace-networking --socks5-server=localhost:1055 &
-  sleep 2
-  HOSTNAME="${WORKSPACE_NAME:-dev}"
-  tailscale up --hostname "dev-${HOSTNAME}" --authkey "${TAILSCALE_AUTH_KEY}" --accept-dns=false || true
-fi
+export COLTEC_CONFIG="$CONFIG_PATH"
 
-# Run daemon
-# If no rclone credentials, run dry-run once for validation
-if [[ -z "${RCLONE_S3_ACCESS_KEY_ID:-}" ]] && [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
-  echo "[post-start] No storage credentials, running daemon in dry-run mode"
-  coltec-daemon --config "$CONFIG_PATH" --once --dry-run || true
-else
-  echo "[post-start] Starting coltec-daemon..."
-  # Initial sync
-  coltec-daemon --config "$CONFIG_PATH" --once || true
-  # Background daemon for continuous sync
-  nohup coltec-daemon --config "$CONFIG_PATH" > /tmp/coltec-daemon.log 2>&1 &
-  echo "[post-start] Daemon started (PID: $!)"
+echo "[post-start] Launching supervisor..."
+sudo rm -f "${PID_FILE}"
+sudo supervisord -c "${CONF}"
+
+echo "[post-start] Supervisor started (logs in ${LOG_DIR})."
+
+if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]] && command -v tailscale >/dev/null 2>&1; then
+  echo "[post-start] Authenticating Tailscale..."
+
+  for _ in {1..10}; do
+    if sudo tailscale status >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  sudo tailscale up \
+    --authkey="${TAILSCALE_AUTH_KEY}" \
+    --hostname="${NETWORKING_HOSTNAME_PREFIX:-dev-}${WORKSPACE_NAME:-codespace}" \
+    --accept-dns=false || true
 fi
 
 echo "[post-start] Done!"

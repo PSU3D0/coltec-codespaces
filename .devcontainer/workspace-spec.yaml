@@ -92,6 +92,15 @@ persistence:
         secret_access_key: ${RCLONE_S3_SECRET_ACCESS_KEY}
         endpoint: ${RCLONE_S3_ENDPOINT}
         region: auto
+    r2encrypted:
+      type: crypt
+      wrap_remote: r2coltec
+      wrap_path: encrypted
+      crypt:
+        password_env: RCLONE_CRYPT_PASSWORD
+        password2_env: RCLONE_CRYPT_SALT
+        filename_encryption: standard
+        directory_name_encryption: true
   sync:
     - name: agent-context
       path: /workspace/agent-context
@@ -115,10 +124,12 @@ persistence:
       exclude:
         - "*.tmp"
         - "*.log"
-networking:
-  enabled: true
-  hostname_prefix: dev-
-  tags:
-    - tag:devcontainer
-    - tag:coltec
+    - name: encrypted
+      path: /workspace/encrypted
+      remote: r2encrypted
+      remote_path: workspaces/coltec/coltec-codespaces/coltec-codespaces-dev/secrets
+      direction: bidirectional
+      interval: 120
+      priority: 1
+
 generated_at: "2025-11-28T09:11:06Z"

@@ -1,4 +1,5 @@
 [tools]
 age = "1.2.1"
 fnox = "1.3.0"
-rclone = "1.65.0"
+rclone = "1.68.2"
+"npm:@devcontainers/cli" = "latest"

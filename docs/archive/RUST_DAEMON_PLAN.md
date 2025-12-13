@@ -909,7 +909,7 @@ ENTRYPOINT ["coltec-daemon"]
 
 #### 7.2 post-start.sh integration script
 
-**File:** `coltec-daemon/scripts/post-start.sh`
+**File:** `template/.devcontainer/scripts/post-start.sh`
 
 ```bash
 #!/usr/bin/env bash

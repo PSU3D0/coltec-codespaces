@@ -18,35 +18,6 @@ pub fn workspace_schema() -> schemars::schema::RootSchema {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct NetworkingSpec {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_hostname_prefix")]
-    pub hostname_prefix: String,
-    #[serde(default = "default_network_tags")]
-    pub tags: Vec<String>,
-}
-
-fn default_hostname_prefix() -> String {
-    "dev-".to_string()
-}
-
-fn default_network_tags() -> Vec<String> {
-    vec!["tag:devcontainer".to_string()]
-}
-
-impl Default for NetworkingSpec {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            hostname_prefix: default_hostname_prefix(),
-            tags: default_network_tags(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct PersistenceMount {
     pub name: String,
     pub target: String,
@@ -447,8 +418,6 @@ pub struct WorkspaceSpec {
     pub mounts: Vec<MountSpec>,
     #[serde(default)]
     pub secrets: Vec<SecretMount>,
-    #[serde(default)]
-    pub networking: NetworkingSpec,
     #[serde(default)]
     pub persistence: PersistenceSpec,
     #[serde(default)]

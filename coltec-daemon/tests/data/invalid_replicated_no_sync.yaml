@@ -4,9 +4,6 @@ metadata:
   org: test
   project: test
 devcontainer:
-  template:
-    name: python
-    path: templates/python.json
   image:
     name: ghcr.io/foo/bar
 persistence:

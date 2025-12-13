@@ -9,7 +9,7 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TAILSCALE_VERSION=1.90.6
-ARG RCLONE_VERSION=1.65.0
+ARG RCLONE_VERSION=1.68.2
 
 USER root
 

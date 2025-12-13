@@ -126,14 +126,11 @@ pub async fn update_health(workspace: &str, result: &PlanResult) -> Result<()> {
             status.healthy = false;
         }
         // Capture the first error
-        status.last_error = result
-            .results
-            .iter()
-            .find_map(|r| r.error.clone());
+        status.last_error = result.results.iter().find_map(|r| r.error.clone());
     }
 
-    let json = serde_json::to_string_pretty(&status)
-        .context("failed to serialize health status")?;
+    let json =
+        serde_json::to_string_pretty(&status).context("failed to serialize health status")?;
     tokio::fs::write(&health_path, json)
         .await
         .with_context(|| format!("failed to write health file: {}", health_path.display()))?;
@@ -823,7 +820,10 @@ mod tests {
     #[test]
     fn test_expand_env_vars_no_expansion() {
         assert_eq!(expand_env_vars("plain_string"), "plain_string");
-        assert_eq!(expand_env_vars("https://example.com"), "https://example.com");
+        assert_eq!(
+            expand_env_vars("https://example.com"),
+            "https://example.com"
+        );
     }
 
     #[test]

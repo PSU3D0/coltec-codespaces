@@ -13,7 +13,7 @@ DOCKER_DIR="$(cd "${SCRIPT_DIR}/../docker" && pwd)"
 if [[ "${COLTEC_TEST_LOCAL:-0}" == "1" ]]; then
     IMAGE_TAG="coltec-codespace:${VARIANT}-local"
 else
-    IMAGE_TAG="${REGISTRY}:${VARIANT}-v${VERSION}"
+    IMAGE_TAG="${REGISTRY}:${VERSION}-${VARIANT}"
 fi
 
 TEST_SCRIPT="${DOCKER_DIR}/${VARIANT}/test.sh"

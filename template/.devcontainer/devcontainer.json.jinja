@@ -5,8 +5,8 @@
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "mounts": [
-    "source={{ env }}-home,target=/home/vscode,type=volume",
-    "source={{ env }}-cache,target=/home/vscode/.cache,type=volume"
+    "source={{ env }}-cache,target=/home/vscode/.cache,type=volume",
+    "source={{ env }}-daemon-state,target=/home/vscode/.local/share/coltec-daemon,type=volume"
   ],
   "runArgs": [
     "--cap-add=SYS_PTRACE",
@@ -24,12 +24,12 @@
     "vscode": {
       "extensions": [
         "ms-azuretools.vscode-docker",
-        "ms-vscode.remote-explorer"{% if project_type == "Python" %},
-        "ms-python.python"{% elif project_type == "Node.js" %},
+        "ms-vscode.remote-explorer"{% if project_type == "python" %},
+        "ms-python.python"{% elif project_type == "node" %},
         "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode"{% elif project_type == "Rust" %},
+        "esbenp.prettier-vscode"{% elif project_type == "rust" %},
         "rust-lang.rust-analyzer",
-        "tamasfe.even-better-toml"{% elif project_type == "Monorepo (polyglot)" %},
+        "tamasfe.even-better-toml"{% elif project_type == "monorepo" %},
         "ms-python.python",
         "dbaeumer.vscode-eslint",
         "rust-lang.rust-analyzer",

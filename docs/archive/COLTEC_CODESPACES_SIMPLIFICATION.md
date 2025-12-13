@@ -511,9 +511,6 @@ persistence:
       exclude:
         - .git/**
         - node_modules/**
-networking:
-  enabled: true
-  hostname_prefix: dev-
 "#;
         let spec: WorkspaceSpec = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(spec.persistence.sync.len(), 1);

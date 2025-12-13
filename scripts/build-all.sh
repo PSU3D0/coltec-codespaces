@@ -29,7 +29,7 @@ build_variant() {
     fi
 
     local local_tag="coltec-codespace:${variant}-local"
-    local registry_tag="${REGISTRY}:${variant}-v${VERSION}"
+    local registry_tag="${REGISTRY}:${VERSION}-${variant}"
     local build_args=()
 
     if [[ -n "${PARENTS[${variant}]:-}" ]]; then

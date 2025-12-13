@@ -17,13 +17,9 @@ devcontainer:
     - --cap-add=SYS_PTRACE
     - --security-opt=seccomp=unconfined
   mounts:
-    - source: {{ env }}-home
-      target: /home/vscode
-      type: volume
     - source: {{ env }}-cache
       target: /home/vscode/.cache
       type: volume
-    # Daemon state (bisync markers, health file) - persisted for sync continuity
     - source: {{ env }}-daemon-state
       target: /home/vscode/.local/share/coltec-daemon
       type: volume
@@ -37,15 +33,15 @@ devcontainer:
       recommended:
         - ms-azuretools.vscode-docker
         - ms-vscode.remote-explorer
-        {%- if project_type == "Python" %}
+        {%- if project_type == "python" %}
         - ms-python.python
-        {%- elif project_type == "Node.js" %}
+        {%- elif project_type == "node" %}
         - dbaeumer.vscode-eslint
         - esbenp.prettier-vscode
-        {%- elif project_type == "Rust" %}
+        {%- elif project_type == "rust" %}
         - rust-lang.rust-analyzer
         - tamasfe.even-better-toml
-        {%- elif project_type == "Monorepo (polyglot)" %}
+        {%- elif project_type == "monorepo" %}
         - ms-python.python
         - dbaeumer.vscode-eslint
         - rust-lang.rust-analyzer
@@ -61,29 +57,29 @@ persistence:
   enabled: {{ persistence_enabled | lower }}
   mode: replicated
   {%- if persistence_enabled %}
-  # Configure named remotes and sync paths for your storage backend
-  # default_remote: primary
-  # remotes:
-  #   primary:
-  #     type: s3
-  #     bucket: my-bucket
-  #     options:
-  #       provider: Cloudflare  # or AWS, etc.
-  #       access_key_id: ${S3_ACCESS_KEY_ID}
-  #       secret_access_key: ${S3_SECRET_ACCESS_KEY}
-  #       endpoint: ${S3_ENDPOINT}
-  #       region: auto
-  # sync:
-  #   - name: workspace
-  #     path: /workspace
-  #     remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/workspace
-  #     direction: bidirectional
-  #     interval: 300
+  default_remote: primary
+  remotes:
+    primary:
+      type: s3
+      bucket: ${RCLONE_BUCKET}
+      options:
+        provider: Cloudflare
+        access_key_id: ${RCLONE_S3_ACCESS_KEY_ID}
+        secret_access_key: ${RCLONE_S3_SECRET_ACCESS_KEY}
+        endpoint: ${RCLONE_S3_ENDPOINT}
+        region: auto
+  sync:
+    - name: workspace
+      path: /workspace
+      remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/workspace
+      direction: bidirectional
+      interval: 300
+      priority: 1
+    - name: claude-config
+      path: /home/vscode/.claude
+      remote_path: workspaces/{{ org }}/{{ project }}/{{ env }}/claude-config
+      direction: bidirectional
+      interval: 60
+      priority: 2
   {%- endif %}
-networking:
-  enabled: false
-  # Set enabled: true and provide TAILSCALE_AUTH_KEY to join a tailnet
-  # hostname_prefix: dev-
-  # tags:
-  #   - tag:devcontainer
 generated_at: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime }}"

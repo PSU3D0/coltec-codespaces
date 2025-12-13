@@ -1,27 +1,67 @@
 # Coltec Codespaces Tooling
 
-This repository owns **all** Coltec devcontainer tooling: Dockerfiles, devcontainer templates, the `coltec-codespaces` rendering CLI, and GitHub Actions that build/publish images to GHCR. Downstream control planes consume tagged releases of this repo when scaffolding workspaces.
+This repository owns **all** Coltec devcontainer tooling: Dockerfiles, Copier templates for scaffolding workspaces, the Rust sync daemon (`coltec-daemon`), and GitHub Actions that build/publish images to GHCR. Downstream control planes consume tagged releases of this repo when scaffolding workspaces.
 
 ## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
 | `docker/` | Dockerfiles + smoke tests for every base SKU (see below) and shared install helpers under `docker/scripts/`. |
-| `devcontainer_templates/` | Jinja templates referenced by workspace specs (`template.path`). |
-| `coltec-daemon/` | Rust sync daemon for workspace persistence (`coltec-daemon`). |
+| `template/` | Copier template for scaffolding workspaces (`./scripts/cs.sh new ...`). |
+| `extensions/` | Opinionated Copier extensions (e.g. `extensions/coltec-venture/`). |
+| `coltec-daemon/` | Rust sync daemon + schema/validator (`coltec-daemon`, `coltec-validate`). |
+| `templates/` | Supporting templates (e.g. supervisor scaffold). |
 | `scripts/` | Local helper scripts for building/testing images (`build-all.sh`, `test-image.sh`). |
-| `specs/examples/` | Example workspace specs used for validation/tests. |
+| `specs/examples/` | Example workspace specs (kept current with schema). |
 | `.github/workflows/` | CI for building/testing (`build-base.yml`) and releasing (`release.yml`). |
+
+## First-Time Setup
+
+Workstation prerequisites:
+- `uv` (used to run Copier)
+- Docker
+- VS Code + Dev Containers extension
+
+```bash
+# Scaffold a new workspace (base template)
+./scripts/cs.sh new ./my-workspace \
+  --data org=acme \
+  --data project=widget \
+  --data env=dev \
+  --data project_type=python
+
+# Or: scaffold with the networking overlay
+./scripts/cs.sh new ./my-workspace-net \
+  --template ./extensions/coltec-network \
+  --data org=acme \
+  --data project=widget \
+  --data env=dev \
+  --data project_type=python
+
+# Open the generated workspace
+code ./my-workspace
+```
+
+In VS Code: run “Dev Containers: Reopen in Container”.
+
+Networking overlay env vars (read at container start):
+- `COLTEC_TAILSCALE_AUTH_KEY` (preferred) or `TAILSCALE_AUTH_KEY` (compat)
+- `COLTEC_NET_HOSTNAME_PREFIX` (default `dev-`) or `COLTEC_NET_HOSTNAME`
+- `COLTEC_NET_TAGS` (comma-separated `tag:...`)
+- `COLTEC_NET_ACCEPT_DNS`/`COLTEC_NET_ACCEPT_ROUTES`/`COLTEC_NET_SSH` (defaults: false/false/true)
+- `COLTEC_NET_EXTRA_ARGS` (raw extra flags)
+
+See `docs/multi-workspace.md` for a prescriptive 5-workspace setup.
 
 ## Base Image SKUs
 
-All workspaces consume one of four GHCR tags: `ghcr.io/psu3d0/coltec-codespace:<version>-<sku>`. Example: `ghcr.io/psu3d0/coltec-codespace:1.0-base-dind-net`. Each SKU trades features for size so most workspaces can stick to the leanest image.
+All workspaces consume one of four GHCR tags: `ghcr.io/psu3d0/coltec-codespace:<ref>-<sku>` where `<ref>` is a semver release (e.g. `1.0.0`), a branch (e.g. `main`), or a SHA alias (e.g. `sha-abcdef0`). Example: `ghcr.io/psu3d0/coltec-codespace:1.0.0-base-dind-net`. Each SKU trades features for size so most workspaces can stick to the leanest image.
 
 | SKU | Dockerfile | Adds on top of… | Invariants |
 | --- | --- | --- | --- |
 | `base` | `docker/base/Dockerfile` | `ubuntu:22.04` | mise (v2025.11.4), git, zsh, tmux, sudo, base tooling + `vscode` user |
 | `base-dind` | `docker/base-dind/Dockerfile` | `base` | Docker CE CLI/daemon, buildx, compose |
-| `base-net` | `docker/base-net/Dockerfile` | `base` | Tailscale (v1.90.6), rclone (v1.65.0) |
+| `base-net` | `docker/base-net/Dockerfile` | `base` | Tailscale (v1.90.6) + rclone |
 | `base-dind-net` | `docker/base-dind-net/Dockerfile` | `base-dind` | Tailscale + rclone |
 
 Guidance:
@@ -95,13 +135,13 @@ persistence:
 | `COLTEC_CONFIG` | `/workspace/.devcontainer/workspace-spec.yaml` | Config path |
 | `COLTEC_INTERVAL` | (from config) | Override sync interval (seconds) |
 | `COLTEC_LOG_FORMAT` | `text` | `text` or `json` |
-| `RUST_LOG` | `info` | Log level (trace/debug/info/warn/error) |
+| `COLTEC_LOG_LEVEL` | `info` | Log level (trace/debug/info/warn/error) |
 
-See `coltec-daemon/README.md` for full documentation.
+See `coltec-daemon/` and `docs/archive/RUST_DAEMON_PLAN.md` for implementation details and CLI behavior.
 
 ## GitHub Actions
 - **build-base.yml** – Runs on pushes/PRs to `main` that touch `docker/**` or supporting tooling. Sequentially builds all four SKUs (pushing only on non-PR events), tags them as `sha-<commit>-<sku>`, and runs the matching smoke test script for each.
-- **release.yml** – Runs on tags (`v*`). Publishes `<version>-<sku>` tags for every SKU (e.g., `1.0-base`, `1.0-base-net`, `1.0-base-dind-net`) plus SHA aliases, then re-runs the smoke suites before exiting.
+- **release.yml** – Runs on tags (`v*`). Publishes `<version>-<sku>` tags for every SKU (e.g., `1.0.0-base`, `1.0.0-base-net`, `1.0.0-base-dind-net`) plus major/minor aliases and SHA tags, then re-runs the smoke suites before exiting.
 
 Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and mount the SKU-specific `docker/<sku>/test.sh` scripts into `docker run` for validation.
 
@@ -109,13 +149,13 @@ Both workflows log in to GHCR using `${{ secrets.GITHUB_TOKEN }}` and mount the 
 1. Update Dockerfiles/tests/templates/specs as needed.
 2. `./scripts/build-all.sh` locally, then `COLTEC_TEST_LOCAL=1 ./scripts/test-image.sh <sku>` for any variants you touched.
 3. Commit + push to `main`. `build-base.yml` will build/test and push branch/SHA tags.
-4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `<version>-<sku>` tags such as `1.0-base-net` and `1.0-base-dind-net` (plus major/minor aliases) for every SKU.
+4. Tag the repo (`git tag v1.0.0 && git push origin v1.0.0`). `release.yml` produces `<version>-<sku>` tags such as `1.0.0-base-net` and `1.0.0-base-dind-net` (plus major/minor aliases) for every SKU.
 5. Update workspace specs / control-plane references to the new image tag.
 
 ## Maintenance Notes
 - Keep `docker/base` minimal (mise, git, shells, tmux, sudo). Add new capabilities by extending one of the higher SKUs.
 - Bump tool versions via `ARG` values in the relevant Dockerfile and matching install script under `docker/scripts/`, then update that SKU's `test.sh`.
-- Extend `devcontainer_templates/` + `specs/` in lockstep with template changes; add regression tests to CI for new spec scenarios.
+- Extend `template/` + `extensions/` + `specs/` in lockstep with schema/template changes; add regression tests to CI for new spec scenarios.
 
 ## Links
 - Registry namespace: `ghcr.io/psu3d0/coltec-codespace`
