@@ -30,9 +30,9 @@ Workstation prerequisites:
   --data env=dev \
   --data project_type=python
 
-# Or: scaffold with the networking overlay
-./scripts/cs.sh new ./my-workspace-net \
-  --template ./extensions/coltec-network \
+# Or: scaffold with the venture template (includes networking)
+./scripts/cs.sh new ./my-workspace-venture \
+  --template ./extensions/coltec-venture \
   --data org=acme \
   --data project=widget \
   --data env=dev \

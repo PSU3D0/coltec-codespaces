@@ -214,15 +214,18 @@ jobs:
 
       - name: Render base template
         run: |
-          uv tool run copier copy ./template /tmp/ws-base --trust \
+          rm -rf ./tmp/ws-base ./tmp/ws-venture
+          mkdir -p ./tmp
+
+          uv tool run copier copy . ./tmp/ws-base --trust --defaults --vcs-ref=HEAD \
             --data org=test-org \
             --data project=test-proj \
             --data env=dev \
             --data project_type=python
 
-      - name: Render networking extension
+      - name: Render venture extension
         run: |
-          uv tool run copier copy ./extensions/coltec-network /tmp/ws-net --trust \
+          uv tool run copier copy ./extensions/coltec-venture ./tmp/ws-venture --trust --defaults \
             --data org=test-org \
             --data project=test-proj \
             --data env=dev \
@@ -230,8 +233,8 @@ jobs:
 
       - name: Validate rendered specs
         run: |
-          cargo run --quiet --manifest-path coltec-daemon/Cargo.toml --bin coltec-validate -- --file /tmp/ws-base/.devcontainer/workspace-spec.yaml
-          cargo run --quiet --manifest-path coltec-daemon/Cargo.toml --bin coltec-validate -- --file /tmp/ws-net/.devcontainer/workspace-spec.yaml
+          cargo run --quiet --manifest-path coltec-daemon/Cargo.toml --bin coltec-validate -- --file ./tmp/ws-base/.devcontainer/workspace-spec.yaml
+          cargo run --quiet --manifest-path coltec-daemon/Cargo.toml --bin coltec-validate -- --file ./tmp/ws-venture/.devcontainer/workspace-spec.yaml
 
-      - name: Assert networking supervisor stanza
-        run: grep -q '^\[program:tailscale\]$' /tmp/ws-net/.devcontainer/supervisord.conf
+      - name: Assert venture networking stanza
+        run: grep -q '^\[program:tailscale\]$' ./tmp/ws-venture/.devcontainer/supervisord.conf

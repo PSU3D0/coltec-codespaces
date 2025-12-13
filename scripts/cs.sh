@@ -9,7 +9,7 @@ Usage:
 
 Notes:
 - Runs copier via `uv tool run copier`.
-- Default template is `./template`.
+- Default template is this repo root (`.`), which contains `copier.yaml`.
 - Provide --data flags for new (e.g., --data org=acme --data project=proj --data env=dev --data project_type=python).
 EOF
 }
@@ -25,7 +25,7 @@ shift 2
 
 case "$cmd" in
   new)
-    template_path="./template"
+    template_path="."
     copier_args=()
 
     while [[ $# -gt 0 ]]; do
@@ -41,7 +41,12 @@ case "$cmd" in
       esac
     done
 
-    uv tool run copier copy "$template_path" "$dest" --trust "${copier_args[@]}"
+    vcs_ref_args=()
+    if [[ "$template_path" == "." ]]; then
+      vcs_ref_args=(--vcs-ref=HEAD)
+    fi
+
+    uv tool run copier copy "$template_path" "$dest" --trust --defaults "${vcs_ref_args[@]}" "${copier_args[@]}"
     ;;
   update)
     uv tool run copier update "$dest" --trust "$@"

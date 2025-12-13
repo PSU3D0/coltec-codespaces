@@ -98,13 +98,13 @@ Suggested starting point:
 - `transfers: 4`, `checkers: 8`, optional `bwlimit: "10M"`
 - aggressive excludes for heavy dirs (`.git/**`, `node_modules/**`, `.venv/**`, `target/**`, caches)
 
-## Optional: networking overlay (Tailscale)
+## Optional: networking (Tailscale)
 
-Use the dedicated extension when you want a tailnet:
+Use the venture template when you want a tailnet:
 
 ```bash
 ./scripts/cs.sh new ./widget-dev-net \
-  --template ./extensions/coltec-network \
+  --template ./extensions/coltec-venture \
   --data org=acme \
   --data project=widget \
   --data env=dev-net \
@@ -112,8 +112,8 @@ Use the dedicated extension when you want a tailnet:
 ```
 
 Then set:
-- `COLTEC_TAILSCALE_AUTH_KEY` (preferred) or `TAILSCALE_AUTH_KEY`
-- optional tuning: `COLTEC_NET_HOSTNAME_PREFIX`, `COLTEC_NET_TAGS`, `COLTEC_NET_ACCEPT_DNS`, `COLTEC_NET_ACCEPT_ROUTES`, `COLTEC_NET_SSH`
+- `COLTEC_TAILSCALE_AUTH_KEY` (preferred) or `TAILSCALE_AUTH_KEY` (compat)
+- optional tuning: `COLTEC_NET_HOSTNAME_PREFIX`, `COLTEC_NET_HOSTNAME`, `COLTEC_NET_TAGS`, `COLTEC_NET_ACCEPT_DNS`, `COLTEC_NET_ACCEPT_ROUTES`, `COLTEC_NET_SSH`, `COLTEC_NET_EXTRA_ARGS`
 
 ## Ops / debugging
 

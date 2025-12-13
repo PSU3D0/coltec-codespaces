@@ -24,11 +24,11 @@ project_type:
   type: str
   help: Primary stack for this workspace
   choices:
-    python: Python
-    node: Node.js
-    rust: Rust
-    monorepo: Monorepo (polyglot)
-    other: Other
+    Python: python
+    Node.js: node
+    Rust: rust
+    Monorepo (polyglot): monorepo
+    Other: other
   default: python
 
 image:

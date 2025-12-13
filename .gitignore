@@ -24,3 +24,7 @@ __pycache__/
 Thumbs.db
 
 .claude/
+
+# Local scratch
+nexus/
+tmp/
