@@ -1,0 +1,32 @@
+[tools]
+# Core tools for the wrapper environment
+python = "3.12"
+uv = "latest"
+node = "lts"
+"npm:@anthropic-ai/claude-code" = "latest"
+"npm:@openai/codex" = "latest"
+"npm:opencode-ai" = "latest"
+"npm:@devcontainers/cli" = "latest"
+
+[env]
+PYTHONUNBUFFERED = "1"
+PYTHONDONTWRITEBYTECODE = "1"
+
+[settings]
+python.uv_venv_auto = true
+
+[tasks.info]
+description = "Show workspace info"
+run = "echo 'Workspace: {{ env }} ({{ org }}/{{ project }})'"
+
+[tasks.shell]
+description = "Open a shell in the codebase submodule"
+run = "cd codebase && $SHELL"
+
+[tasks."human:setup-env"]
+description = "Install optional human shell tooling into .human/"
+run = ".devcontainer/scripts/human-setup.sh"
+
+[tasks."opencode:attach"]
+description = "Attach to the OpenCode tmux session"
+run = "opencode"

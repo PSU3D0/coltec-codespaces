@@ -1,0 +1,10 @@
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+
+# Inherit from coltec-venture extension
+_inherit: ../coltec-venture
+
+_tasks:
+  - "chmod +x .devcontainer/scripts/*.sh"
+  - "mkdir -p codebase agent-context scratch"
