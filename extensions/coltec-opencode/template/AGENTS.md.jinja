@@ -1,0 +1,31 @@
+# Agent Instructions
+
+This is a Coltec-managed workspace wrapper. Application source code lives in the `codebase/` submodule.
+
+## Core Mandates
+- **Code Location**: All application source code lives in `codebase/`. Do not create app files at the wrapper root.
+- **Tooling**: Use `mise` tasks (`mise tasks`) for common workflows.
+- **Python**: Use `uv` for Python execution (`uv run ...`).
+- **State**: Store persistent context in `agent-context/`. Use `scratch/` for temporary files.
+
+## OpenCode Supervisor
+- Base config lives in `.opencode/opencode.json`.
+- Attach to the long-running session with `mise run opencode:attach` (or `opencode`).
+- Per-session overlays are written under `.sessions/<id>/.opencode/` and must not be edited manually.
+
+## Session Worktrees
+- Keep `/workspace/codebase` clean and on `main`.
+- Create a new session worktree:
+  `SESSION_ID=<id> mise run session:new`
+- Resume a session:
+  `SESSION_ID=<id> mise run session:resume`
+- Archive a session (removes worktree, keeps branch):
+  `SESSION_ID=<id> mise run session:archive`
+- Prune stale worktrees:
+  `mise run session:gc`
+- Worktrees live in `codebase/.sessions/<id>` and are branched from `origin/main`.
+- Never create worktrees inside other worktrees.
+
+## Version Control
+- Commit application changes in the `codebase` repo (session branch).
+- Commit wrapper changes only for template/config updates.

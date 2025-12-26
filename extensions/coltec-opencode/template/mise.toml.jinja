@@ -23,10 +23,26 @@ run = "echo 'Workspace: {{ env }} ({{ org }}/{{ project }})'"
 description = "Open a shell in the codebase submodule"
 run = "cd codebase && $SHELL"
 
-[tasks."human:setup-env"]
-description = "Install optional human shell tooling into .human/"
-run = ".devcontainer/scripts/human-setup.sh"
-
 [tasks."opencode:attach"]
 description = "Attach to the OpenCode tmux session"
 run = "opencode"
+
+[tasks."session:new"]
+description = "Create a new codebase worktree session"
+run = "test -n \"${SESSION_ID:-}\" || { echo 'SESSION_ID required'; exit 1; }; git -C codebase fetch origin && mkdir -p codebase/.sessions && git -C codebase worktree add -b session/${SESSION_ID} .sessions/${SESSION_ID} origin/main"
+
+[tasks."session:push"]
+description = "Push session branch to remote"
+run = "test -n \"${SESSION_ID:-}\" || { echo 'SESSION_ID required'; exit 1; }; git -C codebase push -u origin session/${SESSION_ID}"
+
+[tasks."session:resume"]
+description = "Resume an existing codebase worktree session (fetches from remote)"
+run = "test -n \"${SESSION_ID:-}\" || { echo 'SESSION_ID required'; exit 1; }; git -C codebase fetch origin; if [ -d codebase/.sessions/${SESSION_ID} ]; then echo 'Worktree already present'; else git -C codebase worktree add .sessions/${SESSION_ID} session/${SESSION_ID}; fi"
+
+[tasks."session:archive"]
+description = "Archive session (pushes branch, removes worktree)"
+run = "test -n \"${SESSION_ID:-}\" || { echo 'SESSION_ID required'; exit 1; }; git -C codebase push -u origin session/${SESSION_ID} && git -C codebase worktree remove .sessions/${SESSION_ID} && git -C codebase worktree prune"
+
+[tasks."session:gc"]
+description = "Prune stale worktrees"
+run = "git -C codebase worktree prune"
